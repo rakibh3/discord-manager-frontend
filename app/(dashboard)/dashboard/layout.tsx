@@ -10,6 +10,7 @@ import {
 } from "@/components/dashboard/health-banners";
 import { MobileNav } from "@/components/dashboard/mobile-nav";
 import { SidebarNav } from "@/components/dashboard/sidebar-nav";
+import { ThemeToggle } from "@/components/dashboard/theme-toggle";
 import { requireSession } from "@/lib/auth/session";
 
 /**
@@ -63,6 +64,7 @@ export default async function DashboardLayout({
               Discord Manager
             </span>
           </div>
+          <ThemeToggle />
         </header>
 
         <main className="flex min-w-0 flex-1 flex-col gap-4 p-3 md:p-6">

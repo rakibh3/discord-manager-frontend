@@ -5,6 +5,7 @@ import { getCurrentAdmin } from "@/lib/api/endpoints/user";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ThemeToggle } from "@/components/dashboard/theme-toggle";
 
 function initials(name: string): string {
   return (
@@ -42,17 +43,20 @@ export async function AdminIdentity() {
           {admin.email}
         </span>
       </div>
-      <form action={logout} className="shrink-0">
-        <Button
-          type="submit"
-          variant="ghost"
-          size="icon"
-          className="size-8 text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
-          aria-label="Sign out"
-        >
-          <LogOut className="size-4" />
-        </Button>
-      </form>
+      <div className="flex items-center gap-1 shrink-0">
+        <ThemeToggle />
+        <form action={logout} className="shrink-0">
+          <Button
+            type="submit"
+            variant="ghost"
+            size="icon"
+            className="size-8 text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
+            aria-label="Sign out"
+          >
+            <LogOut className="size-4" />
+          </Button>
+        </form>
+      </div>
     </div>
   );
 }
@@ -66,7 +70,10 @@ export function AdminIdentitySkeleton() {
         <Skeleton className="h-3.5 w-24" />
         <Skeleton className="h-3 w-32" />
       </div>
-      <Skeleton className="size-8 shrink-0 rounded-md" />
+      <div className="flex items-center gap-1 shrink-0">
+        <Skeleton className="size-8 shrink-0 rounded-md" />
+        <Skeleton className="size-8 shrink-0 rounded-md" />
+      </div>
     </div>
   );
 }

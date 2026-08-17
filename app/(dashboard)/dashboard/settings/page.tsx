@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 
 import { ProfileForm } from "./profile-form";
+import { AppearanceCard } from "@/components/dashboard/appearance-card";
 import {
   Card,
   CardContent,
@@ -88,13 +89,15 @@ function CardSkeleton({ rows = 4 }: { rows?: number }) {
 
 export default function SettingsPage() {
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1">
         <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
         <p className="text-muted-foreground text-sm">
-          Your admin profile.
+          Your admin profile and workspace preferences.
         </p>
       </div>
+
+      <AppearanceCard />
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Suspense fallback={<CardSkeleton rows={5} />}>
