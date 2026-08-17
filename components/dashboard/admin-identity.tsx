@@ -28,27 +28,29 @@ export async function AdminIdentity() {
   const admin = await getCurrentAdmin();
 
   return (
-    <div className="flex items-center gap-3">
-      <Avatar className="size-8">
+    <div className="flex w-full items-center gap-3">
+      <Avatar className="size-8 shrink-0">
         <AvatarFallback className="text-xs">
           {initials(admin.name)}
         </AvatarFallback>
       </Avatar>
-      <div className="hidden min-w-0 flex-col leading-tight sm:flex">
-        <span className="truncate text-sm font-medium">{admin.name}</span>
+      <div className="flex min-w-0 flex-1 flex-col leading-tight">
+        <span className="truncate text-sm font-medium text-sidebar-foreground">
+          {admin.name}
+        </span>
         <span className="text-muted-foreground truncate text-xs">
           {admin.email}
         </span>
       </div>
-      <form action={logout}>
+      <form action={logout} className="shrink-0">
         <Button
           type="submit"
           variant="ghost"
           size="icon"
-          className="size-11"
+          className="size-8 text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-foreground"
           aria-label="Sign out"
         >
-          <LogOut />
+          <LogOut className="size-4" />
         </Button>
       </form>
     </div>
@@ -58,13 +60,14 @@ export async function AdminIdentity() {
 /** Reserves the resolved layout's space so nothing shifts when it arrives. */
 export function AdminIdentitySkeleton() {
   return (
-    <div className="flex items-center gap-3">
-      <Skeleton className="size-8 rounded-full" />
-      <div className="hidden flex-col gap-1 sm:flex">
+    <div className="flex w-full items-center gap-3">
+      <Skeleton className="size-8 shrink-0 rounded-full" />
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
         <Skeleton className="h-3.5 w-24" />
-        <Skeleton className="h-3 w-36" />
+        <Skeleton className="h-3 w-32" />
       </div>
-      <Skeleton className="size-11 rounded-md" />
+      <Skeleton className="size-8 shrink-0 rounded-md" />
     </div>
   );
 }
+

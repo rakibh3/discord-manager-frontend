@@ -50,7 +50,7 @@ export default async function MembersPage({
         </>
       ) : (
         <>
-          <div className="bg-background/95 supports-[backdrop-filter]:bg-background/80 sticky top-14 z-10 -mx-3 -mt-3 flex flex-col gap-3 border-b px-3 py-3 backdrop-blur md:-mx-6 md:-mt-6 md:px-6 md:py-4">
+          <div className="bg-background sticky top-14 z-10 -mx-3 -mt-3 flex flex-col gap-3 border-b px-3 pb-3 pt-3 md:top-0 md:-mx-6 md:-mt-6 md:px-6 md:pb-4 md:pt-6">
             <div className="flex flex-col gap-1">
               <h1 className="text-xl font-semibold tracking-tight">Member status</h1>
               <p className="text-muted-foreground text-sm">

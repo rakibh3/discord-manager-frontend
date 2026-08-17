@@ -25,7 +25,7 @@ import { cn } from "@/lib/utils";
  * all of that, and the mobile toggle is exactly where keyboard users get
  * stranded when it is done by hand.
  */
-export function MobileNav() {
+export function MobileNav({ footer }: { footer?: React.ReactNode }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
 
@@ -79,7 +79,9 @@ export function MobileNav() {
             })}
           </ul>
         </nav>
+        {footer && <div className="border-t pt-3 mt-2">{footer}</div>}
       </DialogContent>
     </Dialog>
   );
 }
+
