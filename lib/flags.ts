@@ -1,12 +1,5 @@
 import "server-only";
 
-/**
- * Daily-status dashboard availability.
- *
- * The per-member daily status page, the seven overview counts, search/filter,
- * the member detail view and export are fully documented and integrated per
- * `API_INTEGRATION.md` §8.8 and `postman-collection.json`.
- *
- * Enabled by default. Set `DAILY_STATUS_ENABLED=false` if explicitly needed.
- */
+/** Daily-status dashboard availability. Enabled by default; set
+ *  `DAILY_STATUS_ENABLED=false` to turn it off. */
 export const DAILY_STATUS_ENABLED = process.env.DAILY_STATUS_ENABLED !== "false";

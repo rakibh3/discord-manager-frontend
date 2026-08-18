@@ -13,20 +13,8 @@ import { SidebarNav } from "@/components/dashboard/sidebar-nav";
 import { ThemeToggle } from "@/components/dashboard/theme-toggle";
 import { requireSession } from "@/lib/auth/session";
 
-/**
- * The authenticated shell.
- *
- * `requireSession()` runs here, but this is *not* the authorization boundary —
- * layouts don't re-render on client-side navigation and don't control whether
- * their segments render. Every data-access function calls `requireSession()`
- * too, which puts the real guarantee at the data source. This call just stops
- * the chrome rendering for a signed-out visitor.
- *
- * Both the admin identity and the health banners are pushed into nested Server
- * Components inside their own `<Suspense>` boundaries. A top-level `await` on
- * either would hold `{children}` behind it, so every page in the dashboard
- * would wait on the header's `/users/me` call before rendering anything.
- */
+/** The authenticated shell. `requireSession()` runs here but is not the boundary
+ *  — every data-access function repeats it. Slow reads sit in nested `<Suspense>`. */
 export default async function DashboardLayout({
   children,
 }: LayoutProps<"/dashboard">) {

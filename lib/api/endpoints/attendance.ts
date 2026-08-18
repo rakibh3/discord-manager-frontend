@@ -8,25 +8,11 @@ import type {
   VerifyUserPayload,
 } from "@/lib/api/types";
 
-/**
- * Public Attendance API Endpoints (`/api/attendance`)
- *
- * Publicly accessible endpoints used by the student attendance form, as documented
- * in `API_INTEGRATION.md` §8.6 and `postman-collection.json`.
- *
- * These routes require no `Authorization` header (`anonymous: true`).
- * Rate limits apply per IP:
- * - `/attendance/window`: 60 req/min
- * - `/attendance/verify-user`: 60 req/min
- * - `/attendance/submit`: 5 req/15min
- */
+/** Public attendance endpoints (`API_INTEGRATION.md` §8.6). No `Authorization`
+ *  header; rate limited per IP — submit 5 req/15min, the two reads 60 req/min. */
 
-/**
- * `GET /api/attendance/window`
- *
- * Returns the public attendance submission window projection calculated from the
- * stored schedule and current Asia/Dhaka clock.
- */
+/** `GET /api/attendance/window` — the public submission window, derived from the
+ *  stored schedule and the current Asia/Dhaka clock. */
 export function getAttendanceWindow(): Promise<AttendanceWindow> {
   return api<AttendanceWindow>("/attendance/window", {
     anonymous: true,
@@ -34,12 +20,8 @@ export function getAttendanceWindow(): Promise<AttendanceWindow> {
   });
 }
 
-/**
- * `GET /api/attendance/verify-user?username=...`
- *
- * Verifies if a given Discord username belongs to an active member in the guild.
- * Answers HTTP 200 with `data.verified: true | false`.
- */
+/** `GET /api/attendance/verify-user?username=...` — answers 200 either way, with
+ *  `data.verified` carrying the result. */
 export function verifyDiscordUsername(
   username: string,
 ): Promise<VerifyUserPayload> {
@@ -50,12 +32,8 @@ export function verifyDiscordUsername(
   });
 }
 
-/**
- * `POST /api/attendance/submit`
- *
- * Submits daily attendance for a verified guild member.
- * Returns 201 on success, 409 if already submitted for today, 404 if member is not in guild.
- */
+/** `POST /api/attendance/submit` — 201 on success, 409 if already submitted
+ *  today, 404 if the member is not in the guild. */
 export async function submitAttendance(
   payload: AttendanceSubmitInput,
 ): Promise<SubmitAttendancePayload> {

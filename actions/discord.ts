@@ -10,22 +10,16 @@ export type SyncTriggerState =
   | { outcome: "already-running"; message: string }
   | { outcome: "error"; message: string };
 
-/**
- * Starts a full guild re-sync.
- *
- * The endpoint answers **202** before doing any work, so "started" here means
- * queued, not finished — the caller polls `/api/discord/sync-status` until
- * `lastSync.running` is `false`.
- */
+/** Starts a full guild re-sync. The 202 means queued, not finished — the caller
+ *  polls `/api/discord/sync-status` until `lastSync.running` is false. */
 export async function triggerMemberSync(): Promise<SyncTriggerState> {
   try {
     await triggerSync();
   } catch (error) {
     if (!(error instanceof ApiError)) throw error;
 
-    // 409 means a sync is already in flight. That is not a failure — the thing
-    // the admin wanted (a sync running) is true. Reporting an error here would
-    // make a working system look broken, so poll instead.
+    // 409 means a sync is already in flight — what the admin wanted is already
+    // true, so poll instead of reporting a failure.
     if (error.status === 409) {
       return {
         outcome: "already-running",

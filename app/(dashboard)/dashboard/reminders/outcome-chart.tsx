@@ -5,19 +5,8 @@ import type { ReminderLogRow } from "@/lib/api/types";
 /** How many broadcasts the chart covers. Each one costs a progress read. */
 const CHART_ROWS = 8;
 
-/**
- * Delivered / DMs-closed / failed per broadcast date.
- *
- * The history endpoint only carries `sentCount` and `failedCount` — cached
- * counters on the session row with no DM-closed split. The three-way breakdown
- * lives on `GET /reminders/:id`, which reads the recipient rows directly, so
- * this fetches progress for the most recent few broadcasts rather than
- * inferring a DM-closed figure by subtraction. A derived number here would look
- * authoritative and be wrong, which is worse than one fewer series.
- *
- * The reads run in parallel and are bounded to `CHART_ROWS`; a broadcast whose
- * progress read fails is simply left out rather than charted as zeros.
- */
+/** Delivered / DMs-closed / failed per broadcast date. The history endpoint has
+ *  no DM-closed split, so progress is read per broadcast rather than inferred. */
 export async function OutcomeChart({ rows }: { rows: ReminderLogRow[] }) {
   const recent = rows.slice(0, CHART_ROWS);
 
@@ -34,7 +23,9 @@ export async function OutcomeChart({ rows }: { rows: ReminderLogRow[] }) {
   const points = settled
     .filter((progress) => progress !== null)
     .map((progress) => ({
-      date: progress.reminderDate,
+      // Plotted against the day the period ended: a range covers several days
+      // and cannot sit on one axis tick, and the end is when it was acted on.
+      date: progress.reminderEndDate ?? progress.reminderStartDate,
       delivered: progress.delivered,
       dmClosed: progress.dmClosed,
       failed: progress.failed,

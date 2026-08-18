@@ -3,13 +3,8 @@ import { NextResponse } from "next/server";
 import { ApiError } from "@/lib/api/client";
 import { getSyncStatus } from "@/lib/api/endpoints/discord";
 
-/**
- * Same-origin poll target for the sync control.
- *
- * The admin API is server-only, so a client component cannot call it directly.
- * This handler reuses the server client, which means the access token stays in
- * its httpOnly cookie and never reaches the browser or a serialized payload.
- */
+/** Same-origin poll target for the sync control: reuses the server client, so
+ *  the access token stays in its httpOnly cookie. */
 export async function GET() {
   try {
     const data = await getSyncStatus();

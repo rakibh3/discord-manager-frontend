@@ -1,18 +1,5 @@
-/**
- * Asia/Dhaka is the only date authority in this app.
- *
- * `attendanceDate`, `messageDate` and `reminderDate` are `YYYY-MM-DD` strings
- * naming an Asia/Dhaka *calendar day*, and `openTime`/`closeTime` are `HH:mm`
- * wall-clock strings in the same zone. There is no timezone field to send.
- *
- * `new Date().toISOString().slice(0, 10)` is banned repo-wide: it yields the
- * **UTC** day, so an admin in Dhaka at 00:30 would be shown yesterday's
- * dashboard while the backend files rows under today. Everything here goes
- * through an `Intl.DateTimeFormat` pinned to the zone instead.
- *
- * This module is intentionally not `server-only` — the attendance form and the
- * reminder composer both need it in the browser, and it touches no secrets.
- */
+/** Asia/Dhaka is the only date authority: `YYYY-MM-DD` civil days and `HH:mm`
+ *  wall clock. `toISOString().slice(0,10)` is banned — it yields the UTC day. */
 
 export const DHAKA_TIMEZONE = "Asia/Dhaka";
 
@@ -29,13 +16,8 @@ export function dhakaToday(instant: Date = new Date()): string {
   return civilDateFormatter.format(instant);
 }
 
-/**
- * The Dhaka civil day `days` before `from`.
- *
- * The arithmetic runs on a `Date` built with `Date.UTC` from an already-civil
- * date, so it is pure calendar maths with no zone conversion — which is the one
- * case where reading `toISOString()` back out is safe.
- */
+/** The Dhaka civil day `days` before `from` — pure calendar maths on a
+ *  `Date.UTC` value, so no zone conversion is involved. */
 export function dhakaDaysAgo(days: number, from: string = dhakaToday()): string {
   const [year, month, day] = from.split("-").map(Number);
   const shifted = new Date(Date.UTC(year, month - 1, day - days));
@@ -65,14 +47,8 @@ const WEEKDAY_INDEX: Record<string, number> = {
   Sat: 6,
 };
 
-/**
- * Today's Dhaka weekday as `0 = Sunday … 6 = Saturday`, matching the backend's
- * `daysOfWeek`.
- *
- * `Date.getDay()` would answer for the *viewer's* zone, so an admin in London
- * at 20:00 on a Friday would be told it is Friday in Dhaka when it is already
- * Saturday there — and the schedule would read as active on the wrong day.
- */
+/** Today's Dhaka weekday (`0 = Sunday`), matching the backend's `daysOfWeek`.
+ *  `Date.getDay()` would answer for the viewer's zone instead. */
 export function dhakaWeekday(instant: Date = new Date()): number {
   return WEEKDAY_INDEX[weekdayFormatter.format(instant)] ?? 0;
 }
@@ -91,13 +67,8 @@ export function dhakaTimeNow(instant: Date = new Date()): string {
   return wallClockFormatter.format(instant);
 }
 
-/**
- * Everything a human *reads* is 12-hour, because that is how the students and
- * admins say these times out loud ("সন্ধ্যা ৭টা", not "nineteen hundred").
- *
- * The 24-hour rendering survives only in `dhakaTimeNow` above and in the wire
- * format itself, where the string is compared rather than read.
- */
+/** Everything a human reads is 12-hour; 24-hour survives only in `dhakaTimeNow`
+ *  and the wire format, where the string is compared rather than read. */
 const dateTimeFormatter = new Intl.DateTimeFormat("en-GB", {
   timeZone: DHAKA_TIMEZONE,
   dateStyle: "medium",
@@ -120,13 +91,8 @@ const dateOnlyFormatter = new Intl.DateTimeFormat("en-GB", {
   dateStyle: "medium",
 });
 
-/**
- * Renders a backend `DateTime` (`submittedAt`, `nextOpenAt`, `ranAt`, …) in
- * Dhaka, so a travelling admin reads the same clock as the schedule does.
- *
- * Returns an em dash for `null`, which is a real value on most of these fields
- * and should read as "nothing recorded" rather than "Invalid Date".
- */
+/** Renders a backend `DateTime` in Dhaka. Returns an em dash for `null`, which
+ *  is a real value on most of these fields. */
 export function formatDhaka(
   value: string | Date | null | undefined,
   style: "datetime" | "date" | "time" = "datetime",
@@ -147,15 +113,8 @@ export function formatDhaka(
 
 const WALL_CLOCK_PATTERN = /^(\d{1,2}):(\d{2})$/;
 
-/**
- * Renders a stored `HH:mm` wall-clock string as `7:00 PM`.
- *
- * `openTime` and `closeTime` arrive as 24-hour strings because that is what
- * sorts correctly against `dhakaTimeNow()` — but nobody reads a schedule that
- * way, so every *display* of one goes through here. Anything that is not a
- * well-formed `HH:mm` is passed through untouched rather than mangled: a
- * surprising backend value should read as itself, not as `NaN:00 PM`.
- */
+/** Renders a stored `HH:mm` as `7:00 PM`. Anything not well-formed passes
+ *  through untouched rather than rendering as `NaN:00 PM`. */
 export function formatWallClock(time: string): string {
   const match = WALL_CLOCK_PATTERN.exec(time);
   if (!match) return time;

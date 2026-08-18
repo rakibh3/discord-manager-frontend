@@ -41,19 +41,8 @@ import {
 } from "@/lib/validation/announcement";
 import { WEEKDAYS } from "@/lib/validation/schedule";
 
-/**
- * The announcement editor.
- *
- * Two rules shape it. **There is no close-time field** — `{{close_time}}` is
- * read from the `#daily-update` schedule so the two can never disagree, and
- * offering one here would create a second source of truth the backend ignores.
- * **There is no cron field**, for the same reason as the channel schedule.
- *
- * The character counter is driven by the server-rendered preview, not by
- * `body.length`: the 2,000-character limit applies to the message *after*
- * placeholder expansion with the mention line appended, so a short-looking body
- * can still be rejected.
- */
+/** The announcement editor. No close-time or cron field — both are derived
+ *  elsewhere. The counter is driven by the rendered preview, not `body.length`. */
 export function AnnouncementEditor({
   payload,
   onUpdated,
@@ -75,9 +64,8 @@ export function AnnouncementEditor({
   const usersId = useId();
   const bodyRef = useRef<HTMLTextAreaElement>(null);
 
-  // A save — or another admin's change arriving via revalidation — resets the
-  // form's baseline. Adjusted during render rather than in an effect, which
-  // would briefly show the superseded values in the inputs.
+  // A save or another admin's change resets the form's baseline. Adjusted during
+  // render, not in an effect, which would briefly show superseded values.
   const [seenPayload, setSeenPayload] = useState(payload);
   if (seenPayload !== payload) {
     setSeenPayload(payload);
@@ -448,37 +436,22 @@ function withinLimit(preview: AnnouncementPreview): boolean {
   return preview.withinLimit && preview.length <= preview.limit;
 }
 
-/**
- * Re-renders the message server-side as the admin types.
- *
- * Debounced at 600 ms and aborted on every keystroke: the upstream call
- * resolves each mention target, so an un-debounced editor would hammer Discord.
- * It is also the only way to get an honest character count — the limit applies
- * to the rendered message plus the mention line, which the browser cannot
- * compute.
- *
- * `mentionEveryone` and the mention lists are deliberately *not* inputs here:
- * the preview endpoint accepts only `body` and `terminationDays`, so the
- * mention line it appends is always the **stored** one. That is called out in
- * the pane rather than hidden.
- */
+/** Re-renders the message server-side as the admin types: debounced 600 ms and
+ *  aborted per keystroke. Mention state is stored-only, which the pane says. */
 function useLivePreview(
   payload: AnnouncementPayload,
   values: AnnouncementFormValues,
 ): PreviewState {
   const { body, terminationDays } = values;
 
-  // Unchanged from what is stored — the payload already carries that exact
-  // render, so there is nothing to ask the server for. Derived during render
-  // rather than pushed into state by an effect, which would cost a second
-  // render pass on every keystroke that returns the body to its saved value.
+  // Unchanged from what is stored, so the payload already carries that render.
+  // Derived during render to avoid a second pass on every keystroke.
   const isStored =
     body === payload.template.body &&
     terminationDays === payload.template.terminationDays;
 
-  // Keyed by the exact input that produced it, which is what makes `loading`
-  // derivable: a result whose key no longer matches is a stale answer to an
-  // older keystroke, so a request must still be outstanding.
+  // Keyed by the exact input that produced it, which makes `loading` derivable:
+  // a result whose key no longer matches means a request is still outstanding.
   const [result, setResult] = useState<{
     key: string;
     data: AnnouncementPreview | null;

@@ -18,17 +18,7 @@ export type AnnouncementResult =
   | { ok: true; data: AnnouncementPayload }
   | { ok: false; message: string };
 
-/**
- * Applies a partial change to the template or its schedule.
- *
- * The 200 response already reflects the change *and* the rebuilt cron task, so
- * it replaces the displayed state directly rather than waiting for a
- * revalidation round trip.
- *
- * The two service-level 400s — unknown placeholder, and a rendered message over
- * 2,000 characters — arrive as sentences written for an admin (they skip Zod's
- * Title Casing), so they are surfaced verbatim.
- */
+/** Partial update to the template or its schedule; service-level 400s are shown verbatim. */
 export async function updateAnnouncement(
   patch: AnnouncementPatch,
 ): Promise<AnnouncementResult> {
@@ -53,6 +43,9 @@ export type AnnouncementSendState =
   | {
       ok: true;
       result: AnnouncementSendResult;
+      /** ⚠️ True when a server failed *inside a 200* — the send reached some
+       *  servers and not others, which no status code will tell you. */
+      partial: boolean;
       message: string;
       refreshed: AnnouncementPayload | null;
     }
@@ -64,40 +57,60 @@ export type AnnouncementSendState =
       refreshed: AnnouncementPayload | null;
     };
 
-/**
- * Posts the announcement immediately.
- *
- * The most outward-facing action in the dashboard: it reaches ~5,000 students
- * and, when `mentionEveryone` is on, pings every one of them. There is no undo,
- * so the UI gates it behind a confirmation that shows the rendered message.
- *
- * `force` is the only way past the once-per-day claim and files the post as the
- * next attempt. A *failed* send never consumes the day, so a plain retry after
- * fixing a permission is allowed to post — `force` is not needed for that, and
- * using it there would risk two real messages.
- */
+/** Posts the announcement immediately — no undo, so the UI confirms first.
+ *  `force` bypasses the once-per-day claim; a failed send never consumes the day. */
 export async function sendAnnouncementNow(
   force = false,
+  guildIds?: string[],
 ): Promise<AnnouncementSendState> {
   try {
-    const result = await sendAnnouncement(force);
+    const result = await sendAnnouncement(force, guildIds);
     revalidatePath("/dashboard/announcement");
+
+    // ⚠️ Not the `ok`/`succeeded` envelope the channel toggles use: each server
+    // reports a dispatch *status*, because "already sent" is neither success nor
+    // failure — it is the once-per-day claim working exactly as intended.
+    const posted = result.servers.filter(
+      (server) => server.status === "posted",
+    );
+    const failed = result.servers.filter(
+      (server) => server.status === "failed",
+    );
+
+    // Mention targets that no longer resolve are dropped silently by Discord,
+    // so the count has to be carried into the confirmation itself.
+    const unresolved = new Set(
+      posted.flatMap((server) =>
+        server.status === "posted" ? server.unresolvedTargets : [],
+      ),
+    );
+
+    const { total, alreadySent } = result.summary;
+
+    const message =
+      failed.length > 0
+        ? `Posted in ${posted.length} of ${total} servers — ${failed.length} failed.`
+        : total > 1
+          ? `Posted in ${posted.length} of ${total} servers${alreadySent > 0 ? `; ${alreadySent} already had today's message.` : "."}`
+          : "Announcement posted.";
 
     return {
       ok: true,
       result,
+      // A run that left a server behind is not a success story, whatever the
+      // status code says.
+      partial: failed.length > 0 || (posted.length > 0 && posted.length < total),
       message:
-        result.unresolvedTargets.length > 0
-          ? `Announcement posted as attempt ${result.attempt}. ${result.unresolvedTargets.length} mention target(s) no longer resolve and were dropped from the post.`
-          : `Announcement posted as attempt ${result.attempt}.`,
+        unresolved.size > 0
+          ? `${message} ${unresolved.size} mention target(s) no longer resolve and were dropped from the post.`
+          : message,
       refreshed: await refreshQuietly(),
     };
   } catch (error) {
     if (!(error instanceof ApiError)) throw error;
 
-    // Re-read so the screen reflects what actually happened rather than what
-    // was asked for — a 409 in particular means a message already exists today
-    // and the attempt list on screen is now out of date.
+    // Re-read so the screen reflects what actually happened; a 409 means a
+    // message already exists today and the on-screen attempts are stale.
     return {
       ok: false,
       message: error.message,

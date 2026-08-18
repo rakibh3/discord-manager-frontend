@@ -1,19 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-/**
- * Next 16 renamed Middleware to Proxy. Same semantics.
- *
- * This is an **optimistic** check only — cookie presence, never verification.
- * The Next docs are explicit that Proxy is not a session-management or
- * authorization solution; the authoritative check is `requireSession()` in the
- * dashboard layout and in every data-access function. All this buys is avoiding
- * a flash of dashboard chrome before that check runs.
- *
- * It also refreshes proactively. `cookies().set()` throws in a Server
- * Component, so a token that expires mid-render cannot be rotated and forces a
- * logout redirect. Proxy *can* write cookies on the response, so refreshing
- * here means the render never sees an expired token in the first place.
- */
+/** Next 16 renamed Middleware to Proxy. This is an optimistic cookie-presence
+ *  check plus a proactive refresh — `requireSession()` is the real authority. */
 
 const ACCESS_COOKIE = "dm_access";
 const REFRESH_COOKIE = "dm_refresh";
@@ -34,13 +22,8 @@ function setSessionCookies(response: NextResponse, tokens: TokenPair): void {
   response.cookies.set(REFRESH_COOKIE, tokens.refreshToken, options);
 }
 
-/**
- * One refresh attempt against the backend.
- *
- * The endpoint reads `req.cookies.refreshToken` rather than a body, and rotates
- * the pair, returning it in the response body. Failure is silent: the request
- * carries on unauthenticated and the DAL redirects.
- */
+/** One refresh attempt. The endpoint reads `req.cookies.refreshToken` and returns
+ *  the rotated pair in the body; failure is silent and the DAL redirects. */
 async function refresh(refreshToken: string): Promise<TokenPair | null> {
   const base = process.env.API_BASE_URL;
   if (!base) return null;
@@ -106,7 +89,6 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   // `/` is deliberately absent — the homepage is the public attendance form and
-  // must be reachable with or without a session, never redirecting a student to
-  // a login.
+  // must be reachable with or without a session.
   matcher: ["/dashboard/:path*", "/login-admin"],
 };

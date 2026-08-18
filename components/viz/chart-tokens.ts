@@ -1,14 +1,5 @@
-/**
- * Fixed operational meanings for the shared chart palette.
- *
- * The point of pinning these is that the same outcome is the same colour on
- * every chart in the app — "delivered" is never green on one page and blue on
- * another. Charts must still label each series; this is a consistency aid, not
- * a substitute for a legend.
- *
- * These read the `--chart-*` custom properties rather than literal colours, so
- * they follow the theme in both light and dark mode.
- */
+/** Fixed operational meanings for the shared chart palette, so the same outcome
+ *  is the same colour everywhere. Reads `--chart-*`, so it follows the theme. */
 export const CHART_COLORS = {
   /** Delivered · complete · active — the good outcome. */
   positive: "var(--chart-1)",

@@ -3,14 +3,8 @@ import { NextResponse } from "next/server";
 import { ApiError } from "@/lib/api/client";
 import { getProgress } from "@/lib/api/endpoints/reminders";
 
-/**
- * Same-origin poll target for a broadcast's live progress.
- *
- * A broadcast runs for roughly 40 minutes, so the client polls this every 3
- * seconds while the status is `PENDING`/`PROCESSING`. Going through this
- * handler rather than calling the backend directly keeps the access token in
- * its httpOnly cookie on the server.
- */
+/** Same-origin poll target for a broadcast's live progress, polled every 3
+ *  seconds while `PENDING`/`PROCESSING`. Keeps the token on the server. */
 export async function GET(
   _request: Request,
   // `params` is a Promise in Next 16.

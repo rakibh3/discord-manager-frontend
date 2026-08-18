@@ -6,6 +6,7 @@ import { toast } from "sonner";
 
 import { sendAnnouncementNow } from "@/actions/announcement";
 import { DiscordMessage } from "@/components/dashboard/discord-message";
+import { AnnouncementReport } from "@/components/dashboard/fan-out-report";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,24 +20,14 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import type { AnnouncementPayload } from "@/lib/api/types";
+import type {
+  AnnouncementPayload,
+  AnnouncementSendResult,
+} from "@/lib/api/types";
 import { formatCivilDate } from "@/lib/dhaka-date";
 
-/**
- * Manual send, behind a confirmation that shows the real message.
- *
- * This is the most outward-facing action in the dashboard: it posts to a
- * channel roughly 5,000 students read and, when `mentionEveryone` is on, pings
- * all of them. There is no undo, so the dialog renders `preview.content`
- * verbatim — an admin confirming a send should be reading what students will
- * read, not a description of it.
- *
- * The forced send is a separate control rather than a checkbox inside the
- * first dialog. It is the only way past the once-per-day claim, and its correct
- * uses are narrow: recovering a day stuck mid-send, or a genuinely intended
- * second announcement. A *failed* attempt never consumes the day, so an
- * ordinary retry after fixing a permission needs the plain button, not this one.
- */
+/** Manual send, behind a confirmation that renders `preview.content` verbatim —
+ *  it posts to ~5,000 students with no undo. Forced send is a separate control. */
 export function SendAnnouncement({
   payload,
   onRefreshed,
@@ -46,23 +37,29 @@ export function SendAnnouncement({
 }) {
   const [pending, startTransition] = useTransition();
   const [dialog, setDialog] = useState<"send" | "force" | null>(null);
+  const [report, setReport] = useState<AnnouncementSendResult | null>(null);
 
   const run = (force: boolean) => {
     startTransition(async () => {
       const result = await sendAnnouncementNow(force);
 
       if (result.ok) {
-        toast.success(result.message);
+        // ⚠️ A send that reached some servers and not others still resolves
+        // successfully, so a partial result is announced as a warning and the
+        // servers left out stay on screen after the toast is gone.
+        if (result.partial) toast.warning(result.message);
+        else toast.success(result.message);
+        setReport(result.result);
       } else if (result.alreadySent) {
         // Not an error the admin caused — the day-claim did its job and no
-        // second message went out. Point at the way past it rather than
-        // colouring this red.
+        // second message went out, so point at the way past it instead.
         toast.warning(result.message, {
           description:
             "Nothing was posted. Use “Force a second post” if a second message today is genuinely intended.",
         });
       } else {
         toast.error(result.message);
+        setReport(null);
       }
 
       // The attempt list on screen is stale either way now — a send that
@@ -73,9 +70,12 @@ export function SendAnnouncement({
   };
 
   const { preview, template, today } = payload;
+  const servers = today.servers ?? [];
+  const pendingServers = servers.filter((server) => !server.posted);
 
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap gap-2">
       <AlertDialog
         open={dialog === "send"}
         onOpenChange={(next) => setDialog(next ? "send" : null)}
@@ -83,7 +83,11 @@ export function SendAnnouncement({
         <AlertDialogTrigger asChild>
           <Button disabled={pending || today.posted}>
             <Megaphone data-icon="inline-start" />
-            {today.posted ? "Already posted today" : "Send now"}
+            {today.posted
+              ? "Already posted today"
+              : pendingServers.length > 0 && servers.length > 1
+                ? `Send to ${pendingServers.length} remaining server${pendingServers.length === 1 ? "" : "s"}`
+                : "Send now"}
           </Button>
         </AlertDialogTrigger>
         <AlertDialogContent className="max-w-2xl">
@@ -94,9 +98,12 @@ export function SendAnnouncement({
             <AlertDialogDescription asChild>
               <div className="flex flex-col gap-3">
                 <span>
-                  This reaches everyone who reads the channel and{" "}
+                  This posts to <strong>#attendance in every configured
+                  server</strong>, reaches everyone who reads the channel, and{" "}
                   <strong>cannot be un-posted</strong>. The stored schedule is
-                  not changed.
+                  not changed. If it succeeds in some servers and fails in
+                  others the request still succeeds — the per-server outcome is
+                  shown afterwards.
                 </span>
 
                 {template.mentionEveryone ? (
@@ -197,6 +204,9 @@ export function SendAnnouncement({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      </div>
+
+      {report ? <AnnouncementReport result={report} /> : null}
     </div>
   );
 }

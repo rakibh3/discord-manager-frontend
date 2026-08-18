@@ -3,30 +3,44 @@ import "server-only";
 import { cache } from "react";
 
 import { api } from "@/lib/api/client";
-import type { DiscordSyncStatus, SyncTriggerResult } from "@/lib/api/types";
+import type {
+  DiscordServer,
+  DiscordSyncStatus,
+  SyncTriggerResult,
+} from "@/lib/api/types";
 
-/**
- * `GET /api/discord/sync/status` — bot connection, member counts, last sync,
- * and the daily-update ingestion state.
+/** `GET /api/discord/servers` — every configured server, with its label and
+ *  whether the bot currently reaches it. Build every server filter from this
+ *  rather than hard-coding IDs; a single-server deployment returns one entry,
+ *  which is the normal case rather than a separate mode. Memoized per render. */
+export const getServers = cache((): Promise<DiscordServer[]> =>
+  api<DiscordServer[]>("/discord/servers"),
+);
+
+/** The same list, but a failure answers with an empty list instead of throwing.
+ *  The server list only decides whether a *filter* is worth rendering, so it
+ *  must never be able to take a page of real figures down with it. */
+export const getServersQuietly = cache(async (): Promise<DiscordServer[]> => {
+  try {
+    return await getServers();
+  } catch {
+    return [];
+  }
+});
+
+/** `GET /api/discord/sync/status` — bot connection, member counts, last sync and
+ *  ingestion state, plus `servers[]` with each server's own counts and channel
+ *  verification. Uncached, but memoized per render pass.
  *
- * Uncached: the counters are live. Memoized per render pass so the dashboard's
- * health banner and the Discord page's status panel share one call.
- */
+ *  Every server names its channels identically, so a swapped channel ID is
+ *  invisible in configuration and in Discord. `servers[].channels[…].verified`
+ *  is the only place it shows up — read it first when one server goes quiet. */
 export const getSyncStatus = cache((): Promise<DiscordSyncStatus> =>
   api<DiscordSyncStatus>("/discord/sync/status"),
 );
 
-/**
- * `POST /api/discord/sync` — fires a full guild re-sync **without awaiting it**.
- *
- * Answers **202** before any work has happened; a real sync takes tens of
- * seconds. Completion is determined by polling the status endpoint until
- * `lastSync.running` flips to `false`.
- *
- * 409 means a sync is already running — that is not an error, it just means the
- * caller should start polling. 503 means the bot is not connected or the guild
- * could not be fetched.
- */
+/** `POST /api/discord/sync` — answers 202 before any work, so poll the status
+ *  endpoint until `lastSync.running` is false. 409 means one is already running. */
 export function triggerSync(): Promise<SyncTriggerResult> {
   return api<SyncTriggerResult>("/discord/sync", { method: "POST" });
 }

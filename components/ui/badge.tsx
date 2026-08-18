@@ -16,6 +16,13 @@ const badgeVariants = cva(
           "bg-destructive/10 text-destructive focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:focus-visible:ring-destructive/40 [a]:hover:bg-destructive/20",
         outline:
           "border-border text-foreground [a]:hover:bg-muted [a]:hover:text-muted-foreground",
+        // Matches the three severities `alert.tsx` already distinguishes: a
+        // state that is actively wrong (destructive), one that is partly wrong
+        // and needs a decision (warning), and a healthy one (success). A
+        // multi-server action that succeeded in some servers and not others is
+        // exactly the middle case, and must not be painted as either extreme.
+        warning: "bg-warning/10 text-warning [a]:hover:bg-warning/20",
+        success: "bg-success/10 text-success [a]:hover:bg-success/20",
         ghost:
           "hover:bg-muted hover:text-muted-foreground dark:hover:bg-muted/50",
         link: "text-primary underline-offset-4 hover:underline",

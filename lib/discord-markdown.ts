@@ -1,20 +1,5 @@
-/**
- * A parser for the subset of Discord's message markup this app actually posts.
- *
- * The announcement preview exists to answer one question — *what will students
- * see?* — and a raw dump of the template answers it badly: `**23:59**`,
- * `<#1466…>` and `### 📅 Date:` are all authoring syntax that Discord renders
- * away, so the admin is left proof-reading a string nobody will ever read.
- *
- * This is deliberately **not** a general Markdown parser. Discord's flavour
- * differs in ways that matter here: `#` headings only exist at the start of a
- * line (h1–h3, no h4+), `__underline__` is underline rather than emphasis, and
- * `<#id>` / `<@&id>` mentions have no Markdown equivalent at all. Running the
- * text through a CommonMark implementation would get all three wrong.
- *
- * The output is a plain tree so it can be unit-tested without a DOM; rendering
- * lives in `components/discord-message.tsx`.
- */
+/** A parser for the subset of Discord markup this app posts — deliberately not
+ *  CommonMark, whose headings, `__underline__` and `<#id>` handling all differ. */
 
 export type InlineNode =
   | { type: "text"; value: string }
@@ -35,13 +20,8 @@ export type BlockNode =
   | { type: "quote"; children: InlineNode[] }
   | { type: "codeblock"; language: string | null; value: string };
 
-/**
- * One alternation covering every inline form, longest-first.
- *
- * Order is load-bearing: `***` must be tried before `**` before `*`, and
- * `<@&id>` before `<@id>`, or the shorter pattern claims the opening
- * delimiter and the rest of the token is emitted as literal text.
- */
+/** One alternation over every inline form, longest-first: `***` before `**`
+ *  before `*`, or the shorter pattern claims the opening delimiter. */
 const INLINE_SOURCE = [
   "`([^`\\n]+)`", // 1: inline code — first, so nothing inside it is parsed
   "\\*\\*\\*([\\s\\S]+?)\\*\\*\\*", // 2: bold italic
@@ -63,10 +43,8 @@ export function parseInline(text: string): InlineNode[] {
   const nodes: InlineNode[] = [];
   let cursor = 0;
 
-  // A fresh instance per call, not a shared module-level one: `parseInline`
-  // recurses into the contents of every `**…**`, and a global regex carries a
-  // single `lastIndex` that the inner call would rewind — leaving the outer
-  // loop re-matching the same token forever.
+  // A fresh instance per call: `parseInline` recurses, and a shared global
+  // regex carries one `lastIndex` that the inner call would rewind.
   const pattern = new RegExp(INLINE_SOURCE, "g");
   let match = pattern.exec(text);
 
@@ -143,14 +121,8 @@ const LIST_PATTERN = /^\s*[-*]\s+(.*)$/;
 const QUOTE_PATTERN = /^>\s?(.*)$/;
 const FENCE_PATTERN = /^```(\w+)?\s*$/;
 
-/**
- * Splits a message into blocks.
- *
- * Consecutive non-blank lines join into one paragraph with their newlines
- * preserved, because Discord renders a single newline as a line break rather
- * than as a space — collapsing them the way Markdown does would silently
- * reflow the message the students actually receive.
- */
+/** Splits a message into blocks. Consecutive lines join into one paragraph with
+ *  newlines preserved — Discord renders a single newline as a line break. */
 export function parseDiscordMessage(content: string): BlockNode[] {
   const blocks: BlockNode[] = [];
   const lines = content.replace(/\r\n/g, "\n").split("\n");

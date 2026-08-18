@@ -2,6 +2,7 @@ import { CheckCircle2, XCircle } from "lucide-react";
 import type { Metadata } from "next";
 import { Suspense } from "react";
 
+import { ServerPanels } from "./server-panels";
 import { SyncControl } from "./sync-control";
 import { CHART_COLORS } from "@/components/viz/chart-tokens";
 import { CompositionChart } from "@/components/viz/composition-chart";
@@ -14,6 +15,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { aggregateSyncState } from "@/lib/api/derive";
 import { getSyncStatus } from "@/lib/api/endpoints/discord";
 import { formatDhaka, formatDuration } from "@/lib/dhaka-date";
 
@@ -38,7 +40,11 @@ function Stat({
 }
 
 async function BotPanel() {
-  const { bot, lastSync } = await getSyncStatus();
+  const status = await getSyncStatus();
+  const { bot } = status;
+  // Sync state is reported per server and has no combined form on the wire, so
+  // the headline reading is derived — the per-server detail is in ServerPanels.
+  const lastSync = aggregateSyncState(status.servers);
 
   return (
     <Card>
@@ -62,12 +68,17 @@ async function BotPanel() {
       <CardContent className="flex flex-col gap-4">
         <dl className="grid gap-3 sm:grid-cols-2">
           <Stat label="Bot tag" value={bot.tag ?? "—"} />
-          <Stat label="Guild ID" value={bot.guildId ?? "—"} />
+          <Stat
+            label="Servers reachable"
+            value={`${bot.reachableServers} of ${bot.configuredServers}`}
+            hint={
+              bot.reachableServers < bot.configuredServers
+                ? "A server the bot cannot reach records nothing, while the others look healthy."
+                : undefined
+            }
+          />
         </dl>
-        <SyncControl
-          initial={await getSyncStatus()}
-          botConnected={bot.connected}
-        />
+        <SyncControl initial={status} botConnected={bot.connected} />
         {lastSync.lastError ? (
           <p className="text-destructive text-sm">
             Last sync reported: {lastSync.lastError}
@@ -86,8 +97,9 @@ async function MembersPanel() {
       <CardHeader>
         <CardTitle>Member directory</CardTitle>
         <CardDescription>
-          Departed members are kept rather than deleted, so their past
-          attendance and daily updates stay attributable.
+          Counted across every configured server. Departed members are kept
+          rather than deleted, so their past attendance and daily updates stay
+          attributable.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -114,7 +126,10 @@ async function MembersPanel() {
 }
 
 async function LastSyncPanel() {
-  const { lastSync } = await getSyncStatus();
+  const { servers } = await getSyncStatus();
+  // Summed across servers: each syncs independently, so "fetched" here is the
+  // total work done, not one run's figure.
+  const lastSync = aggregateSyncState(servers);
 
   return (
     <Card>
@@ -174,7 +189,7 @@ export default function DiscordPage() {
         <h1 className="text-xl font-semibold tracking-tight">Discord</h1>
         <p className="text-muted-foreground text-sm">
           Bot health and the member directory that every other feature reads
-          from.
+          from, per configured server.
         </p>
       </div>
 
@@ -186,6 +201,10 @@ export default function DiscordPage() {
           <MembersPanel />
         </Suspense>
       </div>
+
+      <Suspense fallback={<PanelSkeleton className="h-56" />}>
+        <ServerPanels />
+      </Suspense>
 
       <Suspense fallback={<PanelSkeleton className="h-56" />}>
         <LastSyncPanel />

@@ -7,19 +7,8 @@ import {
 } from "@/lib/discord-markdown";
 import { cn } from "@/lib/utils";
 
-/**
- * Renders an announcement the way Discord will.
- *
- * The preview's whole job is to let an admin proof-read the message *students*
- * receive before ~5,000 of them receive it. Showing the raw template instead
- * makes them proof-read syntax — and syntax errors in Discord markup fail
- * quietly: a stray `*` does not error, it just posts the asterisk.
- *
- * Deliberately not `dangerouslySetInnerHTML` over a Markdown-to-HTML pass. The
- * body is admin-authored, but the placeholder expansion behind it is not fully
- * under this app's control, and a preview is exactly the wrong place to gain an
- * HTML injection sink. Everything below renders through React elements.
- */
+/** Renders an announcement the way Discord will, so an admin proof-reads the
+ *  message and not the syntax. React elements only — never `innerHTML`. */
 export function DiscordMessage({
   content,
   className,
@@ -166,14 +155,8 @@ function Inline({ node }: { node: InlineNode }): ReactNode {
   }
 }
 
-/**
- * A mention chip.
- *
- * Discord substitutes the live channel/role name here; this app never receives
- * those names — the announcement payload carries IDs only — so the chip names
- * the *kind* of target and keeps the snowflake in the tooltip, where an admin
- * verifying they pointed at the right channel can still read it.
- */
+/** A mention chip. The payload carries IDs only, so the chip names the kind of
+ *  target and keeps the snowflake in the tooltip. */
 function Mention({
   node,
 }: {

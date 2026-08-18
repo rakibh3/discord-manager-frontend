@@ -24,15 +24,8 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-/**
- * Queue and worker health, polled every 10 seconds.
- *
- * `redisConnected: false` is the one an admin most needs framed correctly:
- * sending is unavailable, but the API, the bot, message ingestion and the
- * channel scheduler are all completely unaffected. Without saying so, the
- * reasonable reaction is to restart the server — which fixes nothing and takes
- * down the parts that were working.
- */
+/** Queue and worker health, polled every 10 seconds. `redisConnected: false`
+ *  means sending is down but the bot, ingestion and scheduler are unaffected. */
 export function QueueHealthPanel({
   initial,
 }: {
@@ -146,9 +139,8 @@ export function QueueHealthPanel({
               <Stat label="Failed jobs" value={queueDepth.failed.toLocaleString()} />
             </>
           ) : (
-            // `null` means the queue object could not be reached. Rendering
-            // zeros here would read as "the queue is empty", which is the
-            // opposite of what it means.
+            // `null` means the queue object could not be reached; rendering
+            // zeros would read as "the queue is empty", the opposite meaning.
             <div className="text-muted-foreground sm:col-span-4 text-sm">
               Queue depth is unavailable — the queue could not be reached, so
               there is no count to show. This is not the same as an empty queue.

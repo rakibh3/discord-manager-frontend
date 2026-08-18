@@ -3,24 +3,20 @@ import "server-only";
 import { api, apiRequest } from "@/lib/api/client";
 import type {
   ApiResponse,
-  DailyStatusCounts,
-  DailyStatusMember,
-  DailyStatusMemberDetail,
+  DailyStatusAnyCounts,
+  DailyStatusAnyMemberDetail,
   DailyStatusQuery,
+  DailyStatusRow,
 } from "@/lib/api/types";
+import { periodQuery, periodSearchParams, type Period } from "@/lib/period";
 
-/**
- * Daily Status API Endpoints (`/api/daily-status`)
+/** Daily status endpoints (`API_INTEGRATION.md` §8.8, §5A): counts, paginated
+ *  list, per-member detail and CSV export.
  *
- * Fully integrated reference implementation as documented in `API_INTEGRATION.md` §8.8
- * and `postman-collection.json`.
- *
- * Endpoints:
- * - `GET /api/daily-status/counts?date=YYYY-MM-DD`
- * - `GET /api/daily-status?date=YYYY-MM-DD&page=1&limit=50&status=&search=`
- * - `GET /api/daily-status/members/:memberId?date=YYYY-MM-DD`
- * - `GET /api/daily-status/export?date=YYYY-MM-DD&status=&search=&format=csv`
- */
+ *  Every one of them answers in one of two modes — a single Dhaka `date`, or a
+ *  `from`/`to` span — and returns a different payload shape for each. The two
+ *  are mutually exclusive on the wire, so callers pass a `Period` and
+ *  `lib/period.ts` decides which parameters are sent. */
 const PATHS = {
   counts: "/daily-status/counts",
   page: "/daily-status",
@@ -28,65 +24,81 @@ const PATHS = {
   export: "/daily-status/export",
 } as const;
 
-/**
- * The seven overview figures for a given Asia/Dhaka civil date.
+export type DailyStatusListOptions = Omit<
+  DailyStatusQuery,
+  "date" | "from" | "to" | "daysOfWeek"
+>;
+
+/** `GET /api/daily-status/counts` — the overview figures. In date mode these
+ *  are the seven single-day counts of **people**; in range mode they are the
+ *  rollup buckets plus person-day totals, named differently on purpose.
  *
- * `GET /api/daily-status/counts?date=YYYY-MM-DD`
- *
- * Invariant: `bothComplete + missingUpdateOnly + missingAttendanceOnly + missingBoth === totalMembers`.
- */
-export function getDailyStatusCounts(date: string): Promise<DailyStatusCounts> {
-  return api<DailyStatusCounts>(PATHS.counts, { query: { date } });
+ *  ⚠️ `byServer` never sums to the combined totals: the combined figures count
+ *  people, `byServer` counts memberships. The gap is the overlap between servers. */
+export function getDailyStatusCounts(
+  period: Period,
+  options: { guildId?: string } = {},
+): Promise<DailyStatusAnyCounts> {
+  return api<DailyStatusAnyCounts>(PATHS.counts, {
+    query: { ...periodQuery(period), guildId: options.guildId },
+  });
 }
 
-/**
- * Server-paginated active member list and daily completion status.
- *
- * `GET /api/daily-status?date=YYYY-MM-DD&page=1&limit=50&status=&search=`
- *
- * Filter (`status`) and search combine into one request. `meta.total` reflects
- * the filtered row count.
- */
+/** `GET /api/daily-status` — server-paginated list, one row per **person**
+ *  rather than per server membership. Filters combine (AND) and `meta.total` is
+ *  post-filter. `status` is date-mode only and `rangeStatus` /
+ *  `minMissedBothDays` are range-mode only; the wrong one for the mode is a 400
+ *  rather than a filter that silently does nothing. */
 export function getDailyStatusPage(
-  query: DailyStatusQuery,
-): Promise<ApiResponse<DailyStatusMember[]>> {
-  return apiRequest<DailyStatusMember[]>(PATHS.page, {
+  period: Period,
+  options: DailyStatusListOptions = {},
+): Promise<ApiResponse<DailyStatusRow[]>> {
+  return apiRequest<DailyStatusRow[]>(PATHS.page, {
     query: {
-      date: query.date,
-      page: query.page,
-      limit: query.limit,
-      status: query.status,
-      search: query.search,
+      ...periodQuery(period),
+      guildId: options.guildId,
+      page: options.page,
+      limit: options.limit,
+      status: options.status,
+      rangeStatus: options.rangeStatus,
+      minMissedBothDays: options.minMissedBothDays,
+      search: options.search,
+      sortBy: options.sortBy,
+      sortDir: options.sortDir,
     },
   });
 }
 
-/**
- * One member's contact details, attendance time, and posted `#daily-update` messages.
- *
- * `GET /api/daily-status/members/:memberId?date=YYYY-MM-DD`
- */
+/** `GET /api/daily-status/members/:memberId` — the whole **person**, whichever
+ *  server's member record the id names. `messages` merges every server's
+ *  messages into one timeline, each tagged with where it was posted; range mode
+ *  adds a `days` array with one entry per counted day. */
 export function getDailyStatusMember(
   memberId: string,
-  date: string,
-): Promise<DailyStatusMemberDetail> {
-  return api<DailyStatusMemberDetail>(PATHS.member(memberId), {
-    query: { date },
+  period: Period,
+): Promise<DailyStatusAnyMemberDetail> {
+  return api<DailyStatusAnyMemberDetail>(PATHS.member(memberId), {
+    query: periodQuery(period),
   });
 }
 
-/**
- * Export URL for the currently filtered daily status set.
- *
- * `GET /api/daily-status/export?date=YYYY-MM-DD&status=&search=&format=csv`
- *
- * Returns a path so the browser or route handler can stream the CSV directly.
- */
+/** `GET /api/daily-status/export` — returns a path so the browser or route
+ *  handler can stream the CSV directly. The export gains a leading `servers`
+ *  column, and names the server in the filename when one is filtered. */
 export function dailyStatusExportPath(
-  query: DailyStatusQuery & { format: "csv" | "xlsx" },
+  period: Period,
+  options: DailyStatusListOptions & { format: "csv" | "xlsx" },
 ): string {
-  const params = new URLSearchParams({ date: query.date, format: query.format });
-  if (query.status) params.set("status", query.status);
-  if (query.search) params.set("search", query.search);
+  const params = new URLSearchParams({
+    ...periodSearchParams(period),
+    format: options.format,
+  });
+  if (options.guildId) params.set("guildId", options.guildId);
+  if (options.status) params.set("status", options.status);
+  if (options.rangeStatus) params.set("rangeStatus", options.rangeStatus);
+  if (options.minMissedBothDays !== undefined) {
+    params.set("minMissedBothDays", String(options.minMissedBothDays));
+  }
+  if (options.search) params.set("search", options.search);
   return `${PATHS.export}?${params.toString()}`;
 }

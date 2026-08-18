@@ -2,12 +2,8 @@ import { describe, expect, test } from "bun:test";
 
 import { parseDiscordMessage, parseInline } from "./discord-markdown";
 
-/**
- * The parser's failure mode is silent and public: anything it mis-reads is
- * shown to an admin as "this is exactly what students will see" immediately
- * before it is posted to ~5,000 of them. So the cases pinned here are the ones
- * where Discord's flavour differs from Markdown, plus the real template.
- */
+/** Whatever the parser mis-reads is shown to an admin as "this is what students
+ *  will see", so these pin the cases where Discord's flavour differs. */
 
 const inlineText = (nodes: ReturnType<typeof parseInline>): string =>
   nodes

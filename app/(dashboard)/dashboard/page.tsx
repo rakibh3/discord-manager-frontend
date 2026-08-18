@@ -21,24 +21,23 @@ import {
 import { Empty, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getDailyStatusCounts } from "@/lib/api/endpoints/daily-status";
+import { aggregateSyncState } from "@/lib/api/derive";
 import { getSyncStatus } from "@/lib/api/endpoints/discord";
 import { getHistory } from "@/lib/api/endpoints/reminders";
-import type { DailyStatusCounts } from "@/lib/api/types";
+import { isRangeCounts, type DailyStatusCounts } from "@/lib/api/types";
 import { dhakaToday, formatCivilDate, formatDhaka } from "@/lib/dhaka-date";
 import { DAILY_STATUS_ENABLED } from "@/lib/flags";
+import { datePeriod } from "@/lib/period";
 
 export const metadata: Metadata = { title: "Overview" };
 
-/**
- * The overview.
- *
- * Charts here are built from live backend endpoints:
- * - Member directory composition (`GET /api/discord/sync/status`)
- * - Today's daily completion breakdown (`GET /api/daily-status/counts`)
- * - Recent reminder broadcast outcomes (`GET /api/reminders`)
- */
+/** The overview: member composition, today's completion breakdown and recent
+ *  broadcast outcomes, each from a live backend endpoint. */
 async function MemberComposition() {
-  const { members, lastSync } = await getSyncStatus();
+  const { members, servers } = await getSyncStatus();
+  // Each server syncs on its own schedule; the combined reading names the
+  // oldest thing on screen rather than implying one directory-wide run.
+  const lastSync = aggregateSyncState(servers);
 
   return (
     <Card>
@@ -77,7 +76,10 @@ async function DailyCompletion() {
   const today = dhakaToday();
   let counts: DailyStatusCounts | null = null;
   try {
-    counts = await getDailyStatusCounts(today);
+    const payload = await getDailyStatusCounts(datePeriod(today));
+    // A single date always answers in date mode; anything else would be a
+    // different unit (person-days) and must not be charted as these buckets.
+    counts = isRangeCounts(payload) ? null : payload;
   } catch {
     counts = null;
   }
@@ -86,7 +88,7 @@ async function DailyCompletion() {
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Today's completion</CardTitle>
+          <CardTitle>Today&rsquo;s completion</CardTitle>
           <CardDescription>
             {formatCivilDate(today)} (Asia/Dhaka)
           </CardDescription>
@@ -115,7 +117,7 @@ async function DailyCompletion() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Today's completion</CardTitle>
+        <CardTitle>Today&rsquo;s completion</CardTitle>
         <CardDescription>
           {formatCivilDate(today)} (Asia/Dhaka) &middot; {pct}% both complete
         </CardDescription>

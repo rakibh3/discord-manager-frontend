@@ -9,18 +9,8 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 
-/**
- * What the Status page shows while `DAILY_STATUS_ENABLED` is off.
- *
- * Deliberately contains **no numbers at all** — not a zero, not a placeholder,
- * not a greyed-out sample. A "0%" or a dimmed chart with plausible-looking bars
- * is exactly how a fabricated attendance figure ends up in a screenshot that
- * someone treats as real. An empty explanation is more useful than a
- * convincing lie.
- *
- * No request is issued from this path either, so the backend never sees a call
- * to a route that does not exist and no `API Not Found!` appears in its logs.
- */
+/** Shown while `DAILY_STATUS_ENABLED` is off. Deliberately contains no numbers —
+ *  a plausible-looking placeholder is how a fake figure ends up in a screenshot. */
 export function DailyStatusUnavailable() {
   return (
     <div className="flex flex-col gap-4">

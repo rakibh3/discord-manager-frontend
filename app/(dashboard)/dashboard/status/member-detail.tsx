@@ -3,6 +3,17 @@
 import { useState } from "react";
 
 import {
+  DAILY_STATUS_DESCRIPTION,
+  DAILY_STATUS_LABEL,
+  RANGE_STATUS_DESCRIPTION,
+  RANGE_STATUS_LABEL,
+  rangeStatusBadgeVariant,
+  statusBadgeVariant,
+} from "./status-labels";
+import { ServerBadges } from "@/components/dashboard/server-badges";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -10,36 +21,31 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import type { DailyStatusMemberDetail } from "@/lib/api/types";
-import { formatDhaka } from "@/lib/dhaka-date";
 import {
-  DAILY_STATUS_DESCRIPTION,
-  DAILY_STATUS_LABEL,
-  statusBadgeVariant,
-} from "./status-labels";
+  isRangeDetail,
+  type DailyStatusAnyMemberDetail,
+} from "@/lib/api/types";
+import { formatCivilDate, formatDhaka } from "@/lib/dhaka-date";
+import { formatPeriod, periodSearchParams, type Period } from "@/lib/period";
 
-/**
- * Per-member detail.
+/** Per-person detail. `Dialog` traps focus and returns it to the triggering row
+ *  on dismiss, so a keyboard user is not dropped at the top of a long table.
  *
- * Focus management is handled by `Dialog`: it traps focus while open and
- * returns it to the trigger — the table row's own button — on dismiss, so a
- * keyboard user is put back exactly where they were rather than at the top of
- * a long table.
- */
+ *  The endpoint describes the whole **person**, whichever server's member record
+ *  the id names, and merges every server's messages into one timeline tagged
+ *  with where each was posted. */
 export function MemberDetail({
   memberId,
-  date,
+  period,
   label,
 }: {
   memberId: string;
-  date: string;
+  period: Period;
   label: string;
 }) {
   const [open, setOpen] = useState(false);
-  const [detail, setDetail] = useState<DailyStatusMemberDetail | null>(null);
+  const [detail, setDetail] = useState<DailyStatusAnyMemberDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -47,12 +53,13 @@ export function MemberDetail({
     setLoading(true);
     setError(null);
     try {
+      const query = new URLSearchParams(periodSearchParams(period));
       const response = await fetch(
-        `/api/daily-status/members/${memberId}?date=${encodeURIComponent(date)}`,
+        `/api/daily-status/members/${memberId}?${query.toString()}`,
         { cache: "no-store" },
       );
       if (!response.ok) throw new Error("Could not load this member.");
-      setDetail((await response.json()) as DailyStatusMemberDetail);
+      setDetail((await response.json()) as DailyStatusAnyMemberDetail);
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : "Could not load this member.",
@@ -79,8 +86,8 @@ export function MemberDetail({
         <DialogHeader>
           <DialogTitle>{label}</DialogTitle>
           <DialogDescription>
-            Everything recorded for this member on the selected day, in
-            Asia/Dhaka.
+            Everything recorded for this person over {formatPeriod(period)}, in
+            Asia/Dhaka, across every server they are in.
           </DialogDescription>
         </DialogHeader>
 
@@ -98,12 +105,36 @@ export function MemberDetail({
 
         {detail ? (
           <div className="flex flex-col gap-4">
-            <Badge variant={statusBadgeVariant(detail.status)} className="self-start">
-              {DAILY_STATUS_LABEL[detail.status]}
-            </Badge>
-            <p className="text-muted-foreground text-sm">
-              {DAILY_STATUS_DESCRIPTION[detail.status]}
-            </p>
+            {isRangeDetail(detail) ? (
+              <>
+                <Badge
+                  variant={rangeStatusBadgeVariant(detail.rangeStatus)}
+                  className="self-start"
+                >
+                  {RANGE_STATUS_LABEL[detail.rangeStatus]}
+                </Badge>
+                <p className="text-muted-foreground text-sm">
+                  {RANGE_STATUS_DESCRIPTION[detail.rangeStatus]}
+                </p>
+              </>
+            ) : (
+              <>
+                <Badge
+                  variant={statusBadgeVariant(detail.status)}
+                  className="self-start"
+                >
+                  {DAILY_STATUS_LABEL[detail.status]}
+                </Badge>
+                <p className="text-muted-foreground text-sm">
+                  {DAILY_STATUS_DESCRIPTION[detail.status]}
+                </p>
+              </>
+            )}
+
+            <ServerBadges
+              servers={detail.servers}
+              serverCount={detail.serverCount}
+            />
 
             <dl className="grid gap-3 text-sm sm:grid-cols-2">
               <div className="flex flex-col gap-0.5">
@@ -122,27 +153,72 @@ export function MemberDetail({
                 <dt className="text-muted-foreground text-xs">Email</dt>
                 <dd className="break-all">{detail.email ?? "Not recorded"}</dd>
               </div>
-              <div className="flex flex-col gap-0.5 sm:col-span-2">
-                <dt className="text-muted-foreground text-xs">
-                  Attendance submitted
-                </dt>
-                <dd>
-                  {detail.hasAttendance
-                    ? formatDhaka(detail.attendanceSubmittedAt)
-                    : "No attendance submitted for this day."}
-                </dd>
-              </div>
+
+              {isRangeDetail(detail) ? (
+                <>
+                  <div className="flex flex-col gap-0.5">
+                    <dt className="text-muted-foreground text-xs">
+                      Complete days
+                    </dt>
+                    <dd className="font-mono tabular-nums">
+                      {detail.completeDays} of {detail.daysInRange}
+                    </dd>
+                  </div>
+                  <div className="flex flex-col gap-0.5">
+                    <dt className="text-muted-foreground text-xs">
+                      Missed both
+                    </dt>
+                    <dd className="font-mono tabular-nums">
+                      {detail.missedBothDays}
+                    </dd>
+                  </div>
+                </>
+              ) : (
+                <div className="flex flex-col gap-0.5 sm:col-span-2">
+                  <dt className="text-muted-foreground text-xs">
+                    Attendance submitted
+                  </dt>
+                  <dd>
+                    {detail.hasAttendance
+                      ? formatDhaka(detail.attendanceSubmittedAt)
+                      : "No attendance submitted for this day."}
+                  </dd>
+                </div>
+              )}
             </dl>
 
+            {isRangeDetail(detail) && detail.days.length > 0 ? (
+              <div className="flex flex-col gap-2">
+                <h3 className="text-sm font-medium">Day by day</h3>
+                <ul className="flex flex-col gap-1">
+                  {detail.days.map((day) => (
+                    <li
+                      key={day.date}
+                      className="flex items-center justify-between gap-3 text-sm"
+                    >
+                      <span className="text-muted-foreground">
+                        {formatCivilDate(day.date)}
+                      </span>
+                      <Badge variant={statusBadgeVariant(day.status)}>
+                        {DAILY_STATUS_LABEL[day.status]}
+                      </Badge>
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-muted-foreground text-xs">
+                  Weekdays excluded from the range are not listed — they were
+                  never counted.
+                </p>
+              </div>
+            ) : null}
+
             <div className="flex flex-col gap-2">
-              <h3 className="text-sm font-medium">
-                Messages in #daily-update
-              </h3>
+              <h3 className="text-sm font-medium">Messages in #daily-update</h3>
               {detail.messages.length === 0 ? (
                 // Stated explicitly, rather than leaving an empty area that
                 // reads as a loading failure.
                 <p className="text-muted-foreground text-sm">
-                  This member posted no daily update on this day.
+                  No daily update was posted in any server for this period.
                 </p>
               ) : (
                 <ul className="flex flex-col gap-2">
@@ -151,9 +227,16 @@ export function MemberDetail({
                       key={message.id}
                       className="bg-muted flex flex-col gap-1 rounded-md p-3"
                     >
-                      <time className="text-muted-foreground text-xs">
-                        {formatDhaka(message.postedAt, "time")}
-                      </time>
+                      <div className="text-muted-foreground flex flex-wrap items-center gap-2 text-xs">
+                        <time>{formatDhaka(message.postedAt)}</time>
+                        {/* Which server it was posted in: one timeline, but a
+                            message belongs to exactly one place. */}
+                        {message.serverLabel ? (
+                          <Badge variant="outline" className="font-normal">
+                            {message.serverLabel}
+                          </Badge>
+                        ) : null}
+                      </div>
                       <p className="text-sm whitespace-pre-wrap">
                         {message.content}
                       </p>

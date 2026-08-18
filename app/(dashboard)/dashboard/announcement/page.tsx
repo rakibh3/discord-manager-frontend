@@ -8,9 +8,8 @@ import { getAnnouncement } from "@/lib/api/endpoints/announcement";
 export const metadata: Metadata = { title: "Announcement" };
 
 async function Announcement() {
-  // Uncached by design: `preview.content` has today's date expanded into it and
-  // `today.posted` is the "already sent" signal that gates the send button.
-  // Either one served stale would be actively misleading.
+  // Uncached by design: `preview.content` has today's date expanded into it, and
+  // `today.posted` gates the send button. Either served stale would mislead.
   const payload = await getAnnouncement();
   return <AnnouncementView initial={payload} />;
 }

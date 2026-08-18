@@ -4,15 +4,8 @@ import type {
   AnnouncementPlaceholder,
 } from "@/lib/api/types";
 
-/**
- * Client-side mirrors of the announcement's backend rules.
- *
- * Everything here exists so an admin is told *before* a request goes out. None
- * of it is a substitute for the backend's own checks — in particular the
- * 2,000-character limit is measured on the **rendered** message plus the
- * mention line, which only the server can compute, so the counter in the editor
- * is driven by `preview.length` and never by `body.length`.
- */
+/** Client-side mirrors of the announcement's backend rules, so an admin is told
+ *  before a request goes out. The 2,000-char limit is server-only by necessity. */
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -30,13 +23,8 @@ export function normalizeHandle(raw: string): string {
   return raw.trim().replace(/^@+/, "").toLowerCase();
 }
 
-/**
- * Splits a free-text field into entries on commas, spaces and newlines.
- *
- * Admins paste role IDs and handles in every shape imaginable; accepting one
- * separator and silently dropping the rest would save a list missing most of
- * its entries with no visible error.
- */
+/** Splits a free-text field on commas, spaces and newlines — admins paste role
+ *  IDs and handles in every shape, and dropping the rest would be silent. */
 export function splitEntries(raw: string): string[] {
   return raw
     .split(/[\s,]+/)
@@ -79,13 +67,8 @@ export function formValuesFrom(
   };
 }
 
-/**
- * Placeholders present in `body` that the backend does not support.
- *
- * Returned with their braces so the message can name the exact string to fix.
- * The backend's own rejection is a service-level 400 (not Zod), so it arrives
- * readable and is shown verbatim if this check is somehow out of date.
- */
+/** Placeholders in `body` the backend does not support, returned with their
+ *  braces so the message can name the exact string to fix. */
 export function unknownPlaceholders(
   body: string,
   supported: readonly AnnouncementPlaceholder[],
@@ -226,17 +209,13 @@ export function validateAnnouncement(
     };
   }
 
-  // The length rule is deliberately NOT checked here. It applies to the
-  // rendered message with the mention line appended, which only the server can
-  // produce — a `body.length` check would disagree with the backend in both
-  // directions. The editor shows `preview.length / preview.limit` instead.
+  // The length rule is deliberately not checked here: it applies to the rendered
+  // message plus the mention line, which only the server can produce.
   return { ok: true, patch };
 }
 
-/**
- * `scheduler.lastOutcome` and a failed send both surface raw Discord errors,
- * which tell an admin nothing about what to do.
- */
+/** `scheduler.lastOutcome` and a failed send surface raw Discord errors, which
+ *  tell an admin nothing about what to do. */
 export function explainAnnouncementError(error: string | null): string | null {
   if (!error) return null;
 

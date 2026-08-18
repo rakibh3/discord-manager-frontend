@@ -65,10 +65,8 @@ export function AttendanceForm() {
     setErrors((current) => ({ ...current, [field]: undefined }));
   };
 
-  // Note there is deliberately no verification state here at all. The badge is
-  // informational and does not feed into whether submit is enabled — a student
-  // whose verification failed on a dropped connection must still be able to
-  // submit, and the write path re-runs every check server-side anyway.
+  // Deliberately no verification state: the badge is informational and never
+  // gates submit, and the write path re-runs every check server-side.
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (submitting) return;
@@ -200,9 +198,27 @@ export function AttendanceForm() {
             ({outcome.payload.member.discordUsername}) at{" "}
             {formatDhaka(outcome.payload.submittedAt, "time")}.
           </p>
+          {/*
+            One submission covers every server the handle belongs to, in one
+            transaction — the student is never asked to pick one. Naming the
+            servers is the only way they can tell that happened.
+          */}
+          {(outcome.payload.servers?.length ?? 0) > 1 ? (
+            <p className="text-muted-foreground">
+              এটি{" "}
+              <strong className="text-foreground">
+                {outcome.payload.servers
+                  ?.filter((server) => server.recorded)
+                  .map((server) => server.label)
+                  .join(", ")}
+              </strong>{" "}
+              — সবগুলো সার্ভারের জন্যই রেকর্ড হয়েছে। আলাদা করে আর জমা দিতে হবে না।
+            </p>
+          ) : null}
           <p className="text-muted-foreground">
             আজকের জন্য আর কিছু করার নেই। ভুলবেন না — <code>#daily-update</code>{" "}
-            চ্যানেলে আপনার আপডেটটিও পোস্ট করতে হবে।
+            চ্যানেলে আপনার আপডেটটিও পোস্ট করতে হবে। একটি সার্ভারে পোস্ট করলেই
+            সবগুলোর জন্য গণ্য হবে।
           </p>
         </CardContent>
       </Card>

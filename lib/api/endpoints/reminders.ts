@@ -5,6 +5,7 @@ import { cache } from "react";
 import { api, apiRequest } from "@/lib/api/client";
 import type {
   ApiResponse,
+  ReminderCriterion,
   ReminderDeliveryStatus,
   ReminderLogRow,
   ReminderProgress,
@@ -13,45 +14,64 @@ import type {
   ReminderRecipientRow,
   ReminderTargetsPayload,
 } from "@/lib/api/types";
+import { periodQuery, type Period } from "@/lib/period";
 
-/**
- * `GET /api/reminders/targets?date=YYYY-MM-DD` — the dry run. Sends nothing.
- *
- * `date` is required, must be a real calendar date and must not be in the
- * future. The response is **not paginated**: on a bad day in a 5,000-member
- * guild this is thousands of rows, so callers render `targetCount` plus a
- * bounded slice, never the raw array.
- *
- * This is the exact same query `POST /send` uses, so the preview cannot
- * disagree with what the send will do.
- */
-export function getTargets(date: string): Promise<ReminderTargetsPayload> {
-  return api<ReminderTargetsPayload>("/reminders/targets", { query: { date } });
+/** How a target set is computed, shared by the preview and the send so the two
+ *  cannot disagree — they run the same query. */
+export type ReminderSelection = {
+  period: Period;
+  /** Defaults to `MISSING_UPDATE`, which is what a broadcast meant before
+   *  ranges existed. `MISSING_BOTH` is opt-in on purpose. */
+  criterion?: ReminderCriterion;
+  /** How many counted days the person must have failed. Defaults to 1. */
+  minMissedDays?: number;
+  /** Omitted means every configured server. */
+  guildIds?: string[];
+};
+
+function selectionQuery(selection: ReminderSelection) {
+  return {
+    ...periodQuery(selection.period),
+    criterion: selection.criterion,
+    minMissedDays: selection.minMissedDays,
+    guildIds: selection.guildIds,
+  };
 }
 
-/**
- * `POST /api/reminders/send` — DMs thousands of people and cannot be undone.
+/** `GET /api/reminders/targets` — the dry run, sends nothing. Not paginated, so
+ *  render `targetCount` plus a bounded slice, never the raw array.
  *
- * Answers **202**: the jobs were queued and *nothing has been delivered*.
- * Delivery is paced at `dmPerSecond` (2/sec by default), so a full guild runs
- * for roughly 40 minutes.
+ *  `targetCount` counts recipient rows and `uniqueRecipients` counts people: one
+ *  account targeted through two servers is still exactly one DM, and that gap is
+ *  the per-server audit trail rather than a duplicate send. */
+export function getTargets(
+  selection: ReminderSelection,
+): Promise<ReminderTargetsPayload> {
+  return api<ReminderTargetsPayload>("/reminders/targets", {
+    query: selectionQuery(selection),
+  });
+}
+
+/** `POST /api/reminders/send` — DMs thousands and cannot be undone. 202 means
+ *  queued, paced at `dmPerSecond`; `message` is 1–1970 chars.
  *
- * `date` is required and never inferred — an inferred date near midnight would
- * remind the wrong day's members. `message` is 1–**1970** characters (Discord's
- * 2000 minus the fixed `⚠️ **Daily Update Reminder**` heading).
- *
- * 400 also means "every member already submitted" — nobody to remind, which is
- * a good outcome, not a failure. 409 is the double-click guard and names the
- * existing broadcast. 503 means Redis is unreachable and the broadcast was
- * auto-cancelled so the date isn't left blocked.
- */
-export function sendReminder(input: {
-  date: string;
-  message: string;
-}): Promise<ReminderQueued> {
+ *  A 409 means an unfinished broadcast covers a period sharing **any** day with
+ *  this one — an overlap check, not date equality, because it guards the bot's
+ *  single global DM budget. */
+export function sendReminder(
+  selection: ReminderSelection & { message: string },
+): Promise<ReminderQueued> {
   return api<ReminderQueued>("/reminders/send", {
     method: "POST",
-    body: input,
+    body: {
+      ...periodQuery(selection.period),
+      criterion: selection.criterion,
+      minMissedDays: selection.minMissedDays,
+      ...(selection.guildIds && selection.guildIds.length > 0
+        ? { guildIds: selection.guildIds }
+        : {}),
+      message: selection.message,
+    },
   });
 }
 
@@ -65,21 +85,14 @@ export function getHistory(options: {
   });
 }
 
-/**
- * `GET /api/reminders/:id` — live progress.
- *
- * The four counts are read from the recipient rows rather than the session
- * row's cached counters, and are guaranteed to sum to `targetCount`.
- */
+/** `GET /api/reminders/:id` — live progress, read from the recipient rows and
+ *  guaranteed to sum to `targetCount`. */
 export function getProgress(id: string): Promise<ReminderProgress> {
   return api<ReminderProgress>(`/reminders/${id}`);
 }
 
-/**
- * `GET /api/reminders/:id/recipients` — the delivery audit, paginated and
- * filterable. Sorted by `discordUsername`. Contact details are deliberately not
- * exposed by the backend.
- */
+/** `GET /api/reminders/:id/recipients` — the delivery audit, paginated and
+ *  filterable, sorted by `discordUsername`. */
 export function getRecipients(
   id: string,
   options: {
@@ -97,24 +110,14 @@ export function getRecipients(
   });
 }
 
-/**
- * `POST /api/reminders/:id/cancel` — returns the same payload as `GET /:id`,
- * already showing `CANCELLED`.
- *
- * The worker re-reads the status before every send, so queued and in-flight
- * jobs stop delivering. Recipients never reached stay `PENDING` — they were
- * never attempted, which is not the same as failed. 409 if already terminal.
- */
+/** `POST /api/reminders/:id/cancel` — the same payload as `GET /:id`, already
+ *  `CANCELLED`. Unreached recipients stay `PENDING`; 409 if already terminal. */
 export function cancelReminder(id: string): Promise<ReminderProgress> {
   return api<ReminderProgress>(`/reminders/${id}/cancel`, { method: "POST" });
 }
 
-/**
- * `GET /api/reminders/status` — queue and worker health.
- *
- * Declared before `/:id` on the backend, so this path does not collide.
- * Memoized per render pass: the composer and the health panel both need it.
- */
+/** `GET /api/reminders/status` — queue and worker health. Memoized per render
+ *  pass, since the composer and the health panel both need it. */
 export const getQueueStatus = cache((): Promise<ReminderQueueStatus> =>
   api<ReminderQueueStatus>("/reminders/status"),
 );

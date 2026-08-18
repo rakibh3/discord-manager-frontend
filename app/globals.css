@@ -75,17 +75,8 @@
   --color-chart-background: var(--chart-background);
 }
 
-/*
- * Swiss/minimal admin console. Slate-tinted neutrals, one status-green accent.
- * Every colour is a semantic token — components never carry raw values.
- *
- * --chart-1 … --chart-5 are assigned fixed operational meanings so the same
- * outcome is the same hue on every chart in the app:
- *   1 delivered / complete        2 DMs closed / missing update
- *   3 failed / missing both       4 pending / never attempted
- *   5 departed / missing attendance
- * Charts must still label each series — colour is never the only encoding.
- */
+/* Swiss/minimal admin console; every colour is a semantic token. --chart-1…5 hold
+ * fixed meanings: delivered, DMs closed, failed, pending, departed. */
 :root {
   --background: oklch(1 0 0);
   --foreground: oklch(0.21 0.014 265);
@@ -216,20 +207,8 @@
   }
 }
 
-/*
- * Touch target floor.
- *
- * The `nova` style is deliberately dense — buttons and inputs are 32 px tall,
- * which is right for a mouse on an operations dashboard but below the 44×44 px
- * minimum this project requires for touch. Rather than inflating every control
- * everywhere (which would undo the density the design system asked for), the
- * floor is applied only where the pointer is actually coarse: phones and
- * tablets, which is the case the rule exists to protect — and which is exactly
- * how students use the public attendance form.
- *
- * `min-height`/`min-width` are used so nothing is forced to a fixed size; a
- * control that is already larger keeps its own dimensions.
- */
+/* Touch target floor. The `nova` style is deliberately dense (32 px), so the
+ * 44×44 px minimum is applied only where the pointer is actually coarse. */
 @media (pointer: coarse) {
   button,
   [role="button"],
@@ -279,12 +258,8 @@
   }
 }
 
-/*
- * Reduced motion. Chart entrance animations are driven by `motion`, which reads
- * this preference itself, but the registry's CSS-driven sweeps and every shadcn
- * transition need suppressing here too. Animations are collapsed rather than
- * removed so anything that relies on an `animationend` event still fires.
- */
+/* Reduced motion. `motion` reads the preference itself; CSS sweeps and shadcn
+ * transitions are collapsed rather than removed so `animationend` still fires. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

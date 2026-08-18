@@ -1,20 +1,12 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
-/**
- * Covers the two behaviours in the API client that are easy to get wrong and
- * expensive to discover in production:
- *
- *   1. An expired access token arrives as **HTTP 500** `"jwt expired"`, not
- *      401. It must trigger a refresh and a replay of the original request.
- *   2. Refresh **rotates** the token pair, so concurrent refreshes log the user
- *      out. Three simultaneous expiries must produce exactly one refresh call.
- */
+/** The two easy-to-break behaviours: an expired token arrives as HTTP 500 and
+ *  must trigger refresh + replay, and concurrent refreshes must collapse to one. */
 
 process.env.API_BASE_URL = "http://backend.test/api";
 
 // `server-only` throws unless the bundler resolves its server condition, which
-// the test runner does not do. Stubbing it here does not weaken the guarantee —
-// the real check is the Next build, asserted by task 10.2.
+// the test runner does not. The real check is the Next build.
 mock.module("server-only", () => ({}));
 
 const cookieJar = new Map<string, string>();

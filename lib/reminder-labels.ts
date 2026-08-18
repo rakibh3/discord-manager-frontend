@@ -1,17 +1,12 @@
 import type {
+  ReminderCriterion,
   ReminderDeliveryStatus,
   ReminderStatus,
 } from "@/lib/api/types";
+import { formatCivilDate } from "@/lib/dhaka-date";
 
-/**
- * Fixed wording for every status.
- *
- * These are load-bearing. `DM_CLOSED` is not a failure — the member has DMs
- * closed and gets mentioned in `#daily-update-reminder` instead — and a
- * cancelled broadcast's outstanding recipients were *never attempted*, which is
- * accurate rather than a failure. Getting either wrong makes an admin conclude
- * the system broke when it worked exactly as designed.
- */
+/** Fixed wording per status. `DM_CLOSED` and a cancelled broadcast's unattempted
+ *  recipients are not failures, and must not read as one. */
 
 export const DELIVERY_STATUS_LABEL: Record<ReminderDeliveryStatus, string> = {
   PENDING: "Not yet attempted",
@@ -63,13 +58,8 @@ export const LIVE_STATUSES: ReadonlySet<ReminderStatus> = new Set<ReminderStatus
 export const isLive = (status: ReminderStatus): boolean =>
   LIVE_STATUSES.has(status);
 
-/**
- * "~18 minutes" from `outstanding / dmPerSecond`.
- *
- * Not a nicety: at 2 DMs/second a 5,000-member broadcast runs for ~40 minutes,
- * and a progress bar that barely moves for that long reads as a hung job when
- * it is the rate limiter working correctly.
- */
+/** "~18 minutes" from `outstanding / dmPerSecond`. At 2 DMs/sec a 5,000-member
+ *  broadcast runs ~40 minutes, and a barely-moving bar reads as a hung job. */
 export function estimateRemaining(
   outstanding: number,
   dmPerSecond: number,
@@ -88,3 +78,51 @@ export function estimateRemaining(
 }
 
 export const REMINDER_MESSAGE_MAX_LENGTH = 1970;
+
+// ── Period and criterion (API_INTEGRATION.md §5A) ───────────────────────────
+
+export const CRITERION_LABEL: Record<ReminderCriterion, string> = {
+  MISSING_UPDATE: "No daily update",
+  MISSING_BOTH: "Neither attendance nor an update",
+};
+
+export const CRITERION_DESCRIPTION: Record<ReminderCriterion, string> = {
+  MISSING_UPDATE:
+    "Targets anyone with no daily update on a counted day, whatever their attendance says. This is the default because it is exactly what a broadcast meant before ranges existed — and the daily-update channel is what reminders exist to drive.",
+  MISSING_BOTH:
+    "Targets only people who filed neither attendance nor an update on a counted day. Narrower: a student who submits attendance and never posts an update is not reminded.",
+};
+
+/** Every broadcast records a period rather than a single date; a single-date
+ *  send stores the same day at both ends. ⚠️ `reminderDate` no longer exists on
+ *  any payload, so nothing may read one. Written defensively because a payload
+ *  from a backend that predates the change would otherwise render "Invalid Date". */
+export function reminderPeriodLabel(period: {
+  reminderStartDate?: string | null;
+  reminderEndDate?: string | null;
+}): string {
+  const { reminderStartDate: start, reminderEndDate: end } = period;
+
+  if (!start && !end) return "Unknown period";
+  if (!start || !end || start === end) {
+    return formatCivilDate((start ?? end) as string);
+  }
+  return `${formatCivilDate(start)} – ${formatCivilDate(end)}`;
+}
+
+/** The shorter form a table cell can hold. */
+export function reminderPeriodShort(period: {
+  reminderStartDate?: string | null;
+  reminderEndDate?: string | null;
+}): string {
+  const { reminderStartDate: start, reminderEndDate: end } = period;
+  if (start && end && start !== end) {
+    const days =
+      Math.floor(
+        (Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) /
+          86_400_000,
+      ) + 1;
+    return `${formatCivilDate(start)} + ${days - 1} more day${days - 1 === 1 ? "" : "s"}`;
+  }
+  return reminderPeriodLabel(period);
+}

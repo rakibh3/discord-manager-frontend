@@ -30,12 +30,15 @@ import { Progress } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
 import { CHART_COLORS } from "@/components/viz/chart-tokens";
 import type { ReminderProgress } from "@/lib/api/types";
-import { formatCivilDate, formatDhaka } from "@/lib/dhaka-date";
+import { formatDhaka } from "@/lib/dhaka-date";
+import { WEEKDAY_SHORT } from "@/lib/period";
 import {
   BROADCAST_STATUS_LABEL,
   broadcastStatusDescription,
+  CRITERION_LABEL,
   estimateRemaining,
   isLive,
+  reminderPeriodLabel,
 } from "@/lib/reminder-labels";
 
 const POLL_INTERVAL_MS = 3000;
@@ -71,14 +74,8 @@ function Count({
   );
 }
 
-/**
- * Live broadcast progress.
- *
- * The first read is server-rendered and handed in as `initial`, so there is no
- * empty flash. Polling runs **only** while the status is `PENDING` or
- * `PROCESSING` and stops the moment it goes terminal — a completed broadcast
- * that keeps polling is a request every three seconds forever.
- */
+/** Live broadcast progress. The first read is server-rendered, and polling runs
+ *  only while the status is `PENDING` or `PROCESSING`. */
 export function ProgressView({
   initial,
   dmPerSecond,
@@ -90,9 +87,8 @@ export function ProgressView({
   const [cancelling, startCancel] = useTransition();
   const [dialogOpen, setDialogOpen] = useState(false);
 
-  // Adjust state during render rather than in an effect: when the server
-  // re-renders with fresher progress, it supersedes whatever polling last put
-  // here. Doing this in an effect would render one frame of stale data first.
+  // Adjust during render, not in an effect: a server re-render with fresher
+  // progress supersedes polling without showing a stale frame first.
   const [seenInitial, setSeenInitial] = useState(initial);
   if (seenInitial !== initial) {
     setSeenInitial(initial);
@@ -115,8 +111,7 @@ export function ProgressView({
         setProgress((await response.json()) as ReminderProgress);
       } catch {
         // A failed tick leaves the last known progress on screen and the next
-        // tick retries. An error page here would discard a live view of a
-        // 40-minute job over one dropped request.
+        // one retries; an error page would discard a live view of a long job.
       }
     }, POLL_INTERVAL_MS);
 
@@ -170,7 +165,7 @@ export function ProgressView({
     <Card>
       <CardHeader>
         <CardTitle className="flex flex-wrap items-center gap-2">
-          Broadcast for {formatCivilDate(progress.reminderDate)}
+          Broadcast for {reminderPeriodLabel(progress)}
           <Badge
             variant={
               progress.status === "FAILED"
@@ -213,6 +208,15 @@ export function ProgressView({
           >
             {processed.toLocaleString()} of{" "}
             {progress.targetCount.toLocaleString()} processed ({percent}%).
+            {progress.uniqueRecipients !== undefined &&
+            progress.uniqueRecipients !== progress.targetCount ? (
+              <>
+                {" "}
+                Those are recipient rows across servers;{" "}
+                {progress.uniqueRecipients.toLocaleString()} actual people were
+                messaged, each exactly once.
+              </>
+            ) : null}
             {estimate ? (
               <>
                 {" "}
@@ -260,7 +264,38 @@ export function ProgressView({
           />
         </dl>
 
+        {/*
+          The rule the broadcast ran under, not a recomputation of it: members
+          join and leave, so asking "who would this target now" gives a different
+          answer than it did at send time. The stored rule is the only honest
+          record of who was chosen and why.
+        */}
         <dl className="grid gap-3 border-t pt-4 text-sm sm:grid-cols-3">
+          <div className="flex flex-col gap-0.5">
+            <dt className="text-muted-foreground text-xs">Period</dt>
+            <dd>{reminderPeriodLabel(progress)}</dd>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <dt className="text-muted-foreground text-xs">Targeted</dt>
+            <dd>
+              {progress.criterion
+                ? CRITERION_LABEL[progress.criterion].toLowerCase()
+                : "no daily update"}
+              {progress.minMissedDays && progress.minMissedDays > 1
+                ? `, on at least ${progress.minMissedDays} days`
+                : ""}
+            </dd>
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <dt className="text-muted-foreground text-xs">Weekdays counted</dt>
+            <dd>
+              {progress.daysOfWeek && progress.daysOfWeek.length > 0
+                ? progress.daysOfWeek
+                    .map((day) => WEEKDAY_SHORT[day])
+                    .join(", ")
+                : "Every day"}
+            </dd>
+          </div>
           <div className="flex flex-col gap-0.5">
             <dt className="text-muted-foreground text-xs">Queued</dt>
             <dd>{formatDhaka(progress.createdAt)}</dd>

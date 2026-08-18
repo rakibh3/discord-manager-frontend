@@ -2,34 +2,28 @@ import { AlertTriangle, BotOff, ExternalLink, MessageSquareOff } from "lucide-re
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
+import { aggregateSyncState, latestFallback } from "@/lib/api/derive";
 import { getSyncStatus } from "@/lib/api/endpoints/discord";
 import { getQueueStatus } from "@/lib/api/endpoints/reminders";
 import { formatRelative } from "@/lib/dhaka-date";
 
 const DEVELOPER_PORTAL = "https://discord.com/developers/applications";
 
-/**
- * The outages nothing else on the dashboard reveals.
- *
- * Each of these is silent by construction: the API keeps answering 200, the
- * pages keep rendering numbers, and the system is quietly not doing its job.
- * They are mounted dashboard-wide rather than on the Discord page, because an
- * admin who never opens that page is exactly who needs to see them.
- *
- * Severity is matched to what is actually happening — the departure guard
- * firing is the guard *working*, and dressing it as an error alongside a real
- * outage teaches admins to dismiss both.
- */
+/** The outages nothing else reveals: the API keeps answering 200 while the
+ *  system quietly stops working. Severity matches what is actually happening. */
 export async function HealthBanners() {
-  // Neither read is allowed to blank the shell. If the API is unreachable the
-  // page's own error boundary reports it; a banner strip is the wrong place to
-  // surface a transport failure.
+  // Neither read may blank the shell. A transport failure belongs to the page's
+  // own error boundary, not to a banner strip.
   const [status, queue] = await Promise.all([
     getSyncStatus().catch(() => null),
     getQueueStatus().catch(() => null),
   ]);
 
   const banners: React.ReactNode[] = [];
+
+  // Sync state is per server on the wire; one tripped guard anywhere is the
+  // condition worth surfacing, which is exactly what the merge preserves.
+  const sync = status ? aggregateSyncState(status.servers) : null;
 
   if (status && !status.bot.connected) {
     banners.push(
@@ -79,7 +73,7 @@ export async function HealthBanners() {
     );
   }
 
-  if (status?.lastSync.guardTripped) {
+  if (sync?.guardTripped) {
     banners.push(
       <Alert variant="warning" key="guard">
         <AlertTriangle />
@@ -95,7 +89,79 @@ export async function HealthBanners() {
     );
   }
 
-  if (queue?.lastFallback?.missingPermission) {
+  // ── Multi-server silent failures (API_INTEGRATION.md §5A) ─────────────────
+
+  const servers = status?.servers ?? [];
+  const unreachable = servers.filter((server) => !server.reachable);
+
+  if (servers.length > 1 && unreachable.length > 0) {
+    banners.push(
+      <Alert variant="destructive" key="unreachable-servers">
+        <BotOff />
+        <AlertTitle>
+          {unreachable.length === 1
+            ? `The bot cannot reach ${unreachable[0].label}`
+            : `The bot cannot reach ${unreachable.length} servers`}
+        </AlertTitle>
+        <AlertDescription>
+          Everything still works for the other servers, which is exactly why
+          this is easy to miss: totals keep updating and nothing errors, while{" "}
+          {unreachable.map((server) => server.label).join(", ")} record nothing
+          at all.
+          {unreachable[0].unreachableReason ? (
+            <>
+              {" "}
+              Reason given: <em>{unreachable[0].unreachableReason}</em>
+            </>
+          ) : null}
+        </AlertDescription>
+      </Alert>,
+    );
+  }
+
+  // A channel ID pointing at another guild is invisible in configuration and in
+  // Discord, because every server names its channels identically. The verified
+  // flag is the only symptom before "one server went quiet" is noticed by hand.
+  const misconfigured = servers.flatMap((server) =>
+    Object.entries(server.channels ?? {})
+      .filter(([, check]) => check && !check.verified)
+      .map(([key, check]) => ({
+        server: server.label,
+        channel: key,
+        error: check?.error ?? null,
+      })),
+  );
+
+  if (misconfigured.length > 0) {
+    banners.push(
+      <Alert variant="destructive" key="channel-verification">
+        <AlertTriangle />
+        <AlertTitle>
+          A configured channel belongs to the wrong Discord server
+        </AlertTitle>
+        <AlertDescription className="flex flex-col gap-1.5">
+          <span>
+            Every server names its channels identically, so this looks correct
+            in the configuration and in Discord alike. Affected:{" "}
+            {misconfigured
+              .map((entry) => `${entry.server} (${entry.channel})`)
+              .join(", ")}
+            . Until it is fixed, that server is silently served the wrong
+            channel — or none at all.
+          </span>
+          {misconfigured[0].error ? (
+            <code className="bg-muted overflow-x-auto rounded p-1.5 font-mono text-xs">
+              {misconfigured[0].error}
+            </code>
+          ) : null}
+        </AlertDescription>
+      </Alert>,
+    );
+  }
+
+  const fallback = queue ? latestFallback(queue) : null;
+
+  if (fallback?.missingPermission) {
     banners.push(
       <Alert variant="destructive" key="fallback">
         <MessageSquareOff />
@@ -103,7 +169,7 @@ export async function HealthBanners() {
           The fallback channel announcement reached nobody
         </AlertTitle>
         <AlertDescription>
-          After the last broadcast ({formatRelative(queue.lastFallback.ranAt)}),
+          After the last broadcast ({formatRelative(fallback.ranAt)}),
           the members whose DMs are closed were supposed to be mentioned in{" "}
           <code className="font-mono text-xs">#daily-update-reminder</code>{" "}
           instead. The bot lacks <strong>Send Messages</strong> on that channel,

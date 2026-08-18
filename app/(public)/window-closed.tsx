@@ -11,17 +11,8 @@ import type { AttendanceWindow } from "@/lib/api/types";
 import { formatDhaka, formatWallClock } from "@/lib/dhaka-date";
 import { formatWeekdays } from "@/lib/validation/schedule";
 
-/**
- * What a student sees outside the submission attendanceWindow.
- *
- * The requirement this satisfies is "a meaningful message, not a 404". A 404
- * says the page is wrong; the truth is that the page is right and the *time* is
- * wrong, so the copy leads with when to come back and states the hours plainly.
- *
- * Bilingual for the same reason the form is: the students reading this are
- * Bangla-first, and "closed" is precisely the message that must not be
- * misread as "broken".
- */
+/** What a student sees outside the submission window — a meaningful message,
+ *  not a 404. Bilingual, because "closed" must not be misread as "broken". */
 export function WindowClosed({
   attendanceWindow,
 }: {

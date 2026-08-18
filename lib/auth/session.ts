@@ -6,28 +6,14 @@ import { redirect } from "next/navigation";
 
 import type { TokenPair } from "@/lib/api/types";
 
-/**
- * Session cookies, written by Next rather than by the backend.
- *
- * The backend sets its own `accessToken`/`refreshToken` cookies with
- * `secure: false` combined with `sameSite: 'none'` — a combination browsers
- * reject outright, so cross-origin cookie auth is simply not available. Both
- * login and refresh also return the pair in the response **body**, so we read
- * them from there and set cookies we control.
- */
+/** Session cookies written by Next, not the backend: the backend's own pair is
+ *  `secure:false` + `sameSite:'none'`, which browsers reject outright. */
 
 export const ACCESS_COOKIE = "dm_access";
 export const REFRESH_COOKIE = "dm_refresh";
 
-/**
- * Seven days, not thirty.
- *
- * The refresh token's JWT `exp` follows `JWT_REFRESH_EXPIRES_IN` (30d in dev),
- * but its **database row** is hardcoded to 7 days in `auth.service.ts` and the
- * row is what actually governs — a 30-day JWT whose row has expired is rejected
- * with 401. A longer cookie would just leave users holding a credential the
- * backend already refuses.
- */
+/** Seven days, not thirty: the refresh token's database row is hardcoded to 7
+ *  days in `auth.service.ts`, and the row is what actually governs. */
 const SEVEN_DAYS_IN_SECONDS = 60 * 60 * 24 * 7;
 
 const cookieOptions = () =>
@@ -39,11 +25,8 @@ const cookieOptions = () =>
     maxAge: SEVEN_DAYS_IN_SECONDS,
   }) as const;
 
-/**
- * ⚠️ Only callable from a Server Action or a Route Handler. `cookies().set()`
- * throws during a Server Component render; `lib/api/client.ts` catches that and
- * redirects to `/login-admin` rather than letting it surface.
- */
+/** ⚠️ Server Actions and Route Handlers only — `cookies().set()` throws during a
+ *  Server Component render. */
 export async function writeSession({
   accessToken,
   refreshToken,
@@ -72,19 +55,8 @@ export async function readSession(): Promise<{
   };
 }
 
-/**
- * The authoritative auth check — the Data Access Layer entry point.
- *
- * `proxy.ts` only does an optimistic cookie-presence redirect, and the Next
- * docs are explicit that a layout check is not sufficient either: layouts do
- * not re-render on client-side navigation and do not control whether their
- * segments render. So this is called in the dashboard layout *and* inside every
- * authenticated data-access function, which puts the guarantee at the data
- * source rather than at the chrome.
- *
- * `cache()` memoizes it for one render pass, so the layout plus three data
- * functions still read the cookie jar exactly once.
- */
+/** The authoritative auth check and DAL entry point: called in the dashboard
+ *  layout and in every authenticated data-access function. `cache()` dedupes it. */
 export const requireSession = cache(
   async (): Promise<{ accessToken: string; refreshToken: string | null }> => {
     const session = await readSession();

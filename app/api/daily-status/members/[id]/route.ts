@@ -2,22 +2,27 @@ import { NextResponse } from "next/server";
 
 import { ApiError } from "@/lib/api/client";
 import { getDailyStatusMember } from "@/lib/api/endpoints/daily-status";
-import { dhakaToday } from "@/lib/dhaka-date";
+import { parsePeriod } from "@/lib/period";
 
-/**
- * Same-origin target for the member detail dialog.
- */
+/** Same-origin target for the member detail dialog. The period travels through
+ *  unchanged, so a dialog opened from a range view describes the same span the
+ *  table row was computed over. */
 export async function GET(
   request: Request,
   context: RouteContext<"/api/daily-status/members/[id]">,
 ) {
-
   const { id } = await context.params;
-  const date =
-    new URL(request.url).searchParams.get("date") ?? dhakaToday();
+  const params = new URL(request.url).searchParams;
+
+  const period = parsePeriod({
+    date: params.get("date") ?? undefined,
+    from: params.get("from") ?? undefined,
+    to: params.get("to") ?? undefined,
+    daysOfWeek: params.get("daysOfWeek") ?? undefined,
+  });
 
   try {
-    const data = await getDailyStatusMember(id, date);
+    const data = await getDailyStatusMember(id, period);
     return NextResponse.json(data, {
       headers: { "Cache-Control": "no-store" },
     });
@@ -25,7 +30,7 @@ export async function GET(
     if (error instanceof ApiError) {
       return NextResponse.json(
         { message: error.message },
-        { status: error.status || 502 },
+        { status: error.status || 502, headers: { "Cache-Control": "no-store" } },
       );
     }
     throw error;

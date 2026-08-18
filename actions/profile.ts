@@ -34,10 +34,8 @@ export async function updateProfile(
     return { fieldErrors };
   }
 
-  // Omit blanks entirely rather than sending empty strings — an empty string
-  // fails the backend's URL and length rules for a field the admin never
-  // touched, which would make saving a bio impossible without also setting a
-  // photo URL.
+  // Omit blanks entirely: an empty string fails the backend's URL and length
+  // rules for a field the admin never touched.
   const payload = Object.fromEntries(
     Object.entries(parsed.data).filter(([, value]) => value !== undefined),
   );
@@ -59,10 +57,8 @@ export async function updateProfile(
       return { fieldErrors };
     }
 
-    // 409 is a Prisma P2002: the address belongs to another account. The
-    // backend's own text for this reads "unknown field already exists!",
-    // because `err.meta.target` is undefined under the driver adapter — so it
-    // has to be replaced, not passed through.
+    // 409 is a Prisma P2002 on the email. The backend's own text reads "unknown
+    // field already exists!" under the driver adapter, so it has to be replaced.
     if (error.status === 409) {
       return {
         fieldErrors: {
@@ -71,9 +67,8 @@ export async function updateProfile(
       };
     }
 
-    // 404 is not "you don't exist" — it is the nested `profiles` update raising
-    // P2025 because this admin has no profile row. Seeded admins get one; one
-    // inserted by hand may not.
+    // 404 is the nested `profiles` update raising P2025 — this admin has no
+    // profile row. Seeded admins get one; a hand-inserted one may not.
     if (error.status === 404) {
       return {
         error:

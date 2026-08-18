@@ -17,12 +17,8 @@ const loginSchema = z.object({
   password: z.string().min(1, { error: "Enter your password." }),
 });
 
-/**
- * The server's Zod messages arrive Title Cased word by word
- * ("Enter A Valid Email"), which reads wrong in polished UI. Map the issue
- * paths to our own copy and keep the server text only as a fallback for a
- * field this form does not know about, so nothing is silently swallowed.
- */
+/** Server Zod messages arrive Title Cased ("Enter A Valid Email"), so map issue
+ *  paths to our own copy and keep the server text only as a fallback. */
 const FIELD_COPY: Record<string, string> = {
   email: "Enter a valid email address.",
   password: "Enter your password.",
@@ -86,12 +82,8 @@ export async function login(
   redirect("/dashboard");
 }
 
-/**
- * Logout is best-effort server-side and unconditional client-side: if the
- * backend call fails, the local cookies are cleared and the user lands on
- * `/login-admin` anyway. Leaving a dead session cookie in place would be worse
- * than an orphaned refresh row on the backend.
- */
+/** Best-effort server-side, unconditional client-side: cookies are cleared and
+ *  the user lands on `/login-admin` even if the backend call fails. */
 export async function logout(): Promise<never> {
   try {
     const { refreshToken } = await readSession();

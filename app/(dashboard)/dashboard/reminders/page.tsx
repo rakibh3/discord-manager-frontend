@@ -5,6 +5,7 @@ import { Composer } from "./composer";
 import { BroadcastHistory } from "./history";
 import { QueueHealthPanel } from "./queue-health";
 import { Skeleton } from "@/components/ui/skeleton";
+import { getServersQuietly } from "@/lib/api/endpoints/discord";
 import { getQueueStatus } from "@/lib/api/endpoints/reminders";
 
 export const metadata: Metadata = { title: "Reminders" };
@@ -16,14 +17,17 @@ async function QueueHealth() {
 
 async function SendComposer() {
   // Redis being down is the difference between a send working and a 503, so the
-  // composer needs queue health before it can decide whether to allow one.
-  // `getQueueStatus` is memoized per render pass, so this shares the panel's call.
-  const status = await getQueueStatus().catch(() => null);
+  // composer needs queue health first. Memoized, so this shares the panel's call.
+  const [status, servers] = await Promise.all([
+    getQueueStatus().catch(() => null),
+    getServersQuietly(),
+  ]);
 
   const redisDown = status !== null && !status.redisConnected;
 
   return (
     <Composer
+      servers={servers}
       dmPerSecond={status?.dmPerSecond ?? 2}
       sendingDisabled={redisDown}
       disabledReason={
@@ -35,14 +39,8 @@ async function SendComposer() {
   );
 }
 
-/**
- * Each region loads independently.
- *
- * Every authenticated read touches cookies, which blocks this segment's
- * `loading.tsx` — so a slow queue-health read would otherwise hold the composer
- * and the history behind it. Each skeleton reserves roughly the resolved
- * layout's height so nothing jumps when the real panel arrives.
- */
+/** Each region loads independently: every authenticated read touches cookies and
+ *  blocks `loading.tsx`, so slow panels sit behind their own skeletons. */
 export default async function RemindersPage({
   searchParams,
 }: PageProps<"/dashboard/reminders">) {
@@ -56,8 +54,9 @@ export default async function RemindersPage({
       <div className="flex flex-col gap-1">
         <h1 className="text-xl font-semibold tracking-tight">Reminders</h1>
         <p className="text-muted-foreground text-sm">
-          Direct-message members who have no daily update recorded for a given
-          day. Delivery is paced and cannot be undone.
+          Direct-message people who are behind on their daily update, for a day
+          or a span of days, across every configured server. Delivery is paced,
+          one DM per person, and cannot be undone.
         </p>
       </div>
 

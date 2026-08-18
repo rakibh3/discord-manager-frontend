@@ -22,6 +22,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  announcementAttempts,
+  latestAnnouncementOutcome,
+} from "@/lib/api/derive";
 import type { AnnouncementPayload } from "@/lib/api/types";
 import {
   dhakaTimeNow,
@@ -35,14 +39,8 @@ import {
 } from "@/lib/validation/announcement";
 import { formatWeekdays } from "@/lib/validation/schedule";
 
-/**
- * Owns the displayed announcement state.
- *
- * A save and a send both return authoritative fresh payloads, so they replace
- * what is on screen directly rather than waiting for a revalidation round trip.
- * `initial` still wins whenever the server re-renders, so nothing here can
- * drift from the server's view.
- */
+/** Owns the displayed announcement state: a save and a send both return fresh
+ *  payloads that replace it directly, and `initial` wins on every server render. */
 export function AnnouncementView({
   initial,
 }: {
@@ -58,25 +56,33 @@ export function AnnouncementView({
     setPayload(initial);
   }
 
-  const { template, schedule, scheduler, channel, today } = payload;
+  const { template, schedule, scheduler, today } = payload;
 
-  const lastOutcome = scheduler.lastOutcome;
+  // Attempts and channels are per server on the wire — there is no combined
+  // list — so today's attempts are flattened here, each tagged with the server
+  // it belongs to. Two servers file "attempt 1" independently.
+  const servers = today.servers;
+  const attempts = announcementAttempts(today);
+  const lastOutcome = latestAnnouncementOutcome(scheduler);
+  const postedCount = servers.filter((server) => server.posted).length;
+  // `today.posted` is true only when *every* server has today's message, so a
+  // partial evening is the case the headline badge has to be able to say.
+  const partiallyPosted =
+    servers.length > 1 && postedCount > 0 && postedCount < servers.length;
+
   const failedOutcome =
     lastOutcome?.result.status === "failed" ? lastOutcome.result : null;
   const permissionHint = explainAnnouncementError(failedOutcome?.error ?? null);
 
-  // No boot reconcile exists: a missed announcement is never posted late. If
-  // today is a scheduled day whose time has passed with nothing posted, that
-  // day needs a human — nothing else will notice.
+  // No boot reconcile exists, so a missed announcement is never posted late — a
+  // scheduled day whose time has passed with nothing posted needs a human.
   const missedToday =
     !today.posted &&
     schedule.enabled &&
     schedule.daysOfWeek.includes(dhakaWeekday()) &&
     dhakaTimeNow() > schedule.announceTime;
 
-  const stuckAttempt = today.attempts.find(
-    (attempt) => attempt.status === "SENDING",
-  );
+  const stuckAttempt = attempts.find((attempt) => attempt.status === "SENDING");
 
   return (
     <div className="flex flex-col gap-4">
@@ -166,13 +172,29 @@ export function AnnouncementView({
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               Today
-              <Badge variant={today.posted ? "secondary" : "outline"}>
-                {today.posted ? "Posted" : "Not posted"}
+              <Badge
+                variant={
+                  partiallyPosted
+                    ? "warning"
+                    : today.posted
+                      ? "secondary"
+                      : "outline"
+                }
+              >
+                {partiallyPosted
+                  ? `Posted in ${postedCount} of ${servers.length}`
+                  : today.posted
+                    ? "Posted"
+                    : "Not posted"}
               </Badge>
             </CardTitle>
             <CardDescription>
-              {formatCivilDate(today.date)} · at most one post per day, enforced
-              by the backend rather than by timing.
+              {formatCivilDate(today.date)} · at most one post per day{" "}
+              {servers.length > 1 ? "per server " : ""}, enforced by the backend
+              rather than by timing.
+              {servers.length > 1
+                ? " Each server takes its own day-claim, so a failure in one never consumes another's day."
+                : null}
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
@@ -195,8 +217,14 @@ export function AnnouncementView({
                 </dd>
               </div>
               <div className="flex flex-col gap-0.5">
-                <dt className="text-muted-foreground text-xs">Channel ID</dt>
-                <dd className="font-mono text-sm">{channel.id ?? "—"}</dd>
+                <dt className="text-muted-foreground text-xs">
+                  {servers.length === 1 ? "Channel ID" : "Channels"}
+                </dt>
+                <dd className="font-mono text-sm">
+                  {servers.length === 1
+                    ? (servers[0]?.channelId ?? "—")
+                    : `${servers.length} servers`}
+                </dd>
               </div>
               <div className="flex flex-col gap-0.5">
                 <dt className="text-muted-foreground text-xs">
@@ -208,11 +236,35 @@ export function AnnouncementView({
               </div>
               <div className="flex flex-col gap-0.5">
                 <dt className="text-muted-foreground text-xs">Attempts today</dt>
-                <dd className="text-sm font-medium">
-                  {today.attempts.length}
-                </dd>
+                <dd className="text-sm font-medium">{attempts.length}</dd>
               </div>
             </dl>
+
+            {servers.length > 1 ? (
+              <div className="flex flex-col gap-2">
+                <h3 className="text-sm font-medium">Per server</h3>
+                <ul className="flex flex-col gap-1.5">
+                  {servers.map((server) => (
+                    <li
+                      key={server.guildId}
+                      className="flex flex-wrap items-center justify-between gap-2 text-sm"
+                    >
+                      <span>{server.label}</span>
+                      <div className="flex items-center gap-2">
+                        {server.lastOutcome?.result.status === "failed" ? (
+                          <span className="text-destructive text-xs">
+                            {server.lastOutcome.result.error}
+                          </span>
+                        ) : null}
+                        <Badge variant={server.posted ? "secondary" : "outline"}>
+                          {server.posted ? "Posted" : "Not posted"}
+                        </Badge>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
 
             <SendAnnouncement payload={payload} onRefreshed={setPayload} />
           </CardContent>
@@ -227,22 +279,29 @@ export function AnnouncementView({
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
-            {today.attempts.length === 0 ? (
+            {attempts.length === 0 ? (
               <p className="text-muted-foreground flex items-center gap-2 text-sm">
                 <CircleSlash aria-hidden className="size-4" />
                 Nothing has been attempted today.
               </p>
             ) : (
               <ul className="flex flex-col gap-3">
-                {today.attempts.map((attempt) => (
+                {attempts.map((attempt) => (
                   <li
-                    key={attempt.attempt}
+                    key={`${attempt.guildId}-${attempt.attempt}`}
                     className="border-border flex flex-col gap-1.5 rounded-md border p-3"
                   >
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-medium">
                         Attempt {attempt.attempt}
                       </span>
+                      {/* Which server filed it: each takes its own day-claim,
+                          so attempt numbers repeat across servers. */}
+                      {servers.length > 1 ? (
+                        <Badge variant="outline" className="font-normal">
+                          {attempt.serverLabel}
+                        </Badge>
+                      ) : null}
                       <Badge
                         variant={
                           attempt.status === "POSTED"

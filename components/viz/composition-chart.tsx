@@ -15,15 +15,8 @@ export type CompositionSlice = {
   note?: string;
 };
 
-/**
- * Part-to-whole chart with a mandatory text equivalent.
- *
- * Two rules from the design system are enforced here rather than left to each
- * call site: every series is identified by a **label**, never by colour alone,
- * and the same figures are always available as text. The legend is a real
- * definition list, so the numbers are readable by a screen reader, copyable,
- * and still there if the chart fails to render at all.
- */
+/** Part-to-whole chart with a mandatory text equivalent: every series carries a
+ *  label, and the legend is a real definition list rather than colour alone. */
 export function CompositionChart({
   slices,
   total,

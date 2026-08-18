@@ -21,8 +21,11 @@ import {
 } from "@/components/ui/table";
 import { getHistory } from "@/lib/api/endpoints/reminders";
 import type { ReminderStatus } from "@/lib/api/types";
-import { formatCivilDate, formatDhaka } from "@/lib/dhaka-date";
-import { BROADCAST_STATUS_LABEL } from "@/lib/reminder-labels";
+import { formatDhaka } from "@/lib/dhaka-date";
+import {
+  BROADCAST_STATUS_LABEL,
+  reminderPeriodLabel,
+} from "@/lib/reminder-labels";
 
 const PAGE_SIZE = 10;
 
@@ -78,7 +81,7 @@ export async function BroadcastHistory({ page }: { page: number }) {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Date</TableHead>
+                    <TableHead>Period</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Targets</TableHead>
                     <TableHead className="text-right">Sent</TableHead>
@@ -94,7 +97,7 @@ export async function BroadcastHistory({ page }: { page: number }) {
                   {rows.map((row) => (
                     <TableRow key={row.id}>
                       <TableCell className="font-medium whitespace-nowrap">
-                        {formatCivilDate(row.reminderDate)}
+                        {reminderPeriodLabel(row)}
                       </TableCell>
                       <TableCell>
                         <Badge variant={statusVariant(row.status)}>

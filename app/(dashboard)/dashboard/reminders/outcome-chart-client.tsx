@@ -38,14 +38,8 @@ const SERIES = [
   { key: "failed", label: "Failed", color: CHART_COLORS.negative },
 ] as const;
 
-/**
- * Composed root → Grid → series → axes → tooltip, per the registry's rules,
- * with colours from the shared `--chart-*` tokens rather than literals.
- *
- * The legend names every series and the same figures appear in the table below,
- * so nothing here depends on telling colours apart. DMs-closed is charted
- * separately from failures on purpose — it is not a delivery failure.
- */
+/** Composed root → Grid → series → axes → tooltip, coloured from the shared
+ *  `--chart-*` tokens. DMs-closed is charted apart — it is not a failure. */
 export function OutcomeChartClient({ points }: { points: OutcomePoint[] }) {
   const data = points.map((point) => ({
     ...point,

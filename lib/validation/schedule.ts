@@ -54,16 +54,8 @@ export type ScheduleValidation =
   | { ok: true; patch: SchedulePatch }
   | { ok: false; message: string };
 
-/**
- * Mirrors the backend's three rejections, so the admin is told before a request
- * goes out rather than after.
- *
- * The `closeTime > openTime` rule is the subtle one: the service applies it to
- * the **merged** result of the patch and the stored row, not to the submitted
- * fields. Sending `{ closeTime: "02:00" }` against a stored `openTime` of
- * `18:00` is a 400 even though the form only shows one field changing — so the
- * check here has to merge against the loaded row too, or it would disagree.
- */
+/** Mirrors the backend's three rejections. `closeTime > openTime` is applied to
+ *  the patch merged with the stored row, so the check here has to merge too. */
 export function validateSchedulePatch(
   current: ChannelSchedulePayload["schedule"],
   next: {
@@ -111,11 +103,8 @@ export function validateSchedulePatch(
   return { ok: true, patch };
 }
 
-/**
- * `scheduler.lastRun.error` is where a missing `Manage Roles` permission first
- * shows up, as a raw `DiscordAPIError[50013]: Missing Permissions`. That string
- * tells an admin nothing about what to do, so it is translated.
- */
+/** `scheduler.lastRun.error` surfaces a raw `DiscordAPIError[50013]`, which tells
+ *  an admin nothing about what to do — so it is translated. */
 export function explainScheduleError(error: string | null): string | null {
   if (!error) return null;
 

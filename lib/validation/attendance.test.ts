@@ -7,13 +7,8 @@ import {
   PHONE_REGEX,
 } from "@/lib/validation/attendance";
 
-/**
- * The username rule is the single highest-stakes piece of validation in the
- * app. Tightening it by one character class locks 5.3% of real members out of
- * attendance permanently, and the failure is silent — those students just
- * cannot submit. These cases are the exact ones verified against the live
- * server.
- */
+/** The highest-stakes validation in the app: tightening the rule by one
+ *  character class silently locks 5.3% of real members out of attendance. */
 describe("Discord username rule", () => {
   test.each([
     // Leading and trailing separators are VALID. 115 of 2,189 live members
@@ -84,10 +79,8 @@ describe("phone rule", () => {
 });
 
 describe("attendance schema", () => {
-  // Names are English-only by product decision — students enter their name in
-  // Latin script. These two blocks are the pair that pins that down: Bengali is
-  // rejected, and the rejection is deliberate rather than the mark-vs-letter
-  // accident that `[\p{L}\s]` produces.
+  // Names are English-only by product decision, so Bengali is rejected
+  // deliberately rather than by the mark-vs-letter accident `[\p{L}\s]` makes.
   test.each([
     "রাকিবুল হাসান",
     "মোঃ আবির",

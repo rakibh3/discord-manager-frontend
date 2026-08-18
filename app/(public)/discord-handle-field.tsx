@@ -28,24 +28,17 @@ export type HandleBadge =
   | { kind: "duplicate"; date: string }
   | { kind: "error"; retryAfter: number | null };
 
-/**
- * Live Discord username verification.
+/** Servers this handle belongs to that still have no row for today.
  *
- * Called **browser-direct**, not through the Next server: this fires on a
- * keystroke debounce, and proxying every call would double the latency of an
- * endpoint that is public by design and rate-limited per IP.
- *
- * Two things the backend does that drive the logic here:
- *
- *   - It answers **HTTP 200 even for an unknown handle**, so the verdict comes
- *     from `data.verified`, never from the status code. A malformed handle is a
- *     400, which is a different message: "fix your typing" rather than "you are
- *     not in the server".
- *   - Nothing here gates submission. Verification is an affordance; the write
- *     path re-runs every check server-side and is the real enforcement point.
- *     A student whose verification failed because their wifi dropped must still
- *     be able to submit.
- */
+ *  ⚠️ The top-level `alreadySubmitted` is true only when **every** server has
+ *  today's row, so a student in two servers who submitted through one is *not*
+ *  done — telling them otherwise would leave the other server short. */
+function pendingServers(payload: VerifyUserPayload) {
+  return (payload.servers ?? []).filter((server) => !server.alreadySubmitted);
+}
+
+/** Live Discord username verification, called browser-direct to avoid doubling
+ *  the latency. Answers 200 either way, and never gates submission. */
 export function DiscordHandleField({
   value,
   onChange,
@@ -59,11 +52,8 @@ export function DiscordHandleField({
 }) {
   const abortRef = useRef<AbortController | null>(null);
 
-  // Only the *asynchronous* verdict is state, and it is tagged with the handle
-  // it belongs to. Everything a keystroke can decide synchronously — empty,
-  // malformed, still checking — is derived during render instead, so the
-  // displayed badge can never lag the input by a frame or belong to a handle
-  // the student has already edited.
+  // Only the asynchronous verdict is state, tagged with the handle it belongs
+  // to; everything decidable synchronously is derived during render.
   const [remote, setRemote] = useState<{
     handle: string;
     badge: HandleBadge;
@@ -225,7 +215,7 @@ export function DiscordHandleField({
         ) : null}
 
         {badge.kind === "verified" && member ? (
-          <span className="text-success flex items-center gap-2">
+          <span className="text-success flex items-start gap-2">
             <Avatar className="size-6">
               {member.avatarUrl ? (
                 <AvatarImage src={member.avatarUrl} alt="" />
@@ -234,9 +224,28 @@ export function DiscordHandleField({
                 {member.discordUsername.slice(0, 2).toUpperCase()}
               </AvatarFallback>
             </Avatar>
-            <span>
-              ✅ {member.displayName ?? member.discordUsername} — সার্ভারে পাওয়া
-              গেছে।
+            <span className="flex flex-col gap-0.5">
+              <span>
+                ✅ {member.displayName ?? member.discordUsername} — সার্ভারে
+                পাওয়া গেছে।
+              </span>
+              {/*
+                Only when it changes what the student has to do. A single server
+                is the normal case and needs no explanation; two servers with one
+                already submitted is the case where a plain "already submitted"
+                would be wrong.
+              */}
+              {(badge.payload.servers?.length ?? 0) > 1 ? (
+                <span className="text-muted-foreground">
+                  আপনি {badge.payload.servers?.length}টি সার্ভারে আছেন। একবার জমা
+                  দিলেই সবগুলোর জন্য attendance রেকর্ড হবে
+                  {pendingServers(badge.payload).length <
+                  (badge.payload.servers?.length ?? 0)
+                    ? ` (${pendingServers(badge.payload).length}টি এখনও বাকি)`
+                    : ""}
+                  ।
+                </span>
+              ) : null}
             </span>
           </span>
         ) : null}

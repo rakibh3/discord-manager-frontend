@@ -3,15 +3,8 @@ import { WindowClosed } from "./window-closed";
 import { getAttendanceWindow } from "@/lib/attendance-window";
 import { dhakaToday, formatCivilDate } from "@/lib/dhaka-date";
 
-/**
- * Rendered per request, not prerendered.
- *
- * Two reasons, either of which alone would be enough. The header shows today's
- * Dhaka civil date, which prerendered would freeze at build time and tell every
- * student the wrong day from the second day onward. And the submission window
- * turns over on a wall clock, so a cached page would keep showing "closed"
- * after it opened — or, worse, the form after it closed.
- */
+/** Rendered per request: the header shows today's Dhaka date, and the submission
+ *  window turns over on a wall clock, so neither may be prerendered. */
 export const dynamic = "force-dynamic";
 
 export default async function AttendancePage() {
@@ -19,10 +12,8 @@ export default async function AttendancePage() {
   // not the browser's local date.
   const today = dhakaToday();
 
-  // `null` means the window could not be determined — the backend has not
-  // shipped the route yet, or is unreachable. That deliberately falls through
-  // to the form: the window is a courtesy, and `POST /attendance/submit` is
-  // where the real checks live. See `lib/attendance-window.ts`.
+  // `null` means the window could not be determined, which falls through to the
+  // form — `POST /attendance/submit` is where the real checks live.
   const attendanceWindow = await getAttendanceWindow();
   const closed = attendanceWindow !== null && !attendanceWindow.isOpen;
 

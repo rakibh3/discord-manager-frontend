@@ -18,13 +18,8 @@ function initials(name: string): string {
   );
 }
 
-/**
- * The signed-in admin, read from `GET /users/me`.
- *
- * This lives in its own Server Component so the layout can wrap it in
- * `<Suspense>`. A top-level `await` on the DAL in the layout would hold
- * `{children}` behind this request — the whole page would wait on the header.
- */
+/** The signed-in admin from `GET /users/me`, in its own Server Component so the
+ *  layout can `<Suspense>` it instead of holding `{children}` behind the call. */
 export async function AdminIdentity() {
   const admin = await getCurrentAdmin();
 

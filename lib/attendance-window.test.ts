@@ -1,15 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
-/**
- * The attendance window gate has exactly one behaviour that matters and it is
- * a negative one: **it must never close the form because something broke.**
- *
- * A fail-closed bug here would show ~5,000 students a "come back later" page
- * during the hours they are supposed to be submitting, with nothing in the UI
- * revealing why — and it would look identical to the window working correctly.
- * These tests pin every failure mode to `null`, which the homepage renders as
- * the ordinary form.
- */
+/** The window gate must never close the form because something broke: every
+ *  failure mode is pinned to `null`, which the homepage renders as the form. */
 
 process.env.API_BASE_URL = "http://backend.test/api";
 
@@ -139,11 +131,8 @@ describe("getAttendanceWindow", () => {
     expect(await getAttendanceWindow()).toBeNull();
   });
 
-  /**
-   * The subtle one. A payload missing `isOpen` would coerce to `false` and lock
-   * every student out of a form that is genuinely open, so a half-shaped
-   * response has to be treated as no answer rather than as "closed".
-   */
+  /** A payload missing `isOpen` would coerce to `false` and lock everyone out,
+   *  so a half-shaped response counts as no answer rather than as "closed". */
   test("fails open on a payload missing isOpen rather than reading it as closed", async () => {
     stubFetch(() =>
       json(200, {

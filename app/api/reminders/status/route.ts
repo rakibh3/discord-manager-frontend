@@ -3,13 +3,8 @@ import { NextResponse } from "next/server";
 import { ApiError } from "@/lib/api/client";
 import { getQueueStatus } from "@/lib/api/endpoints/reminders";
 
-/**
- * Same-origin poll target for queue and worker health, polled every 10 seconds
- * on the reminders page.
- *
- * On the backend `/reminders/status` is declared *before* `/:id`, so this path
- * does not collide with a broadcast id.
- */
+/** Same-origin poll target for queue and worker health, polled every 10 seconds.
+ *  Declared before `/:id` on the backend, so the path does not collide. */
 export async function GET() {
   try {
     const data = await getQueueStatus();

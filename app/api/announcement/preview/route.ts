@@ -4,22 +4,8 @@ import { ApiError } from "@/lib/api/client";
 import { previewAnnouncement } from "@/lib/api/endpoints/announcement";
 import type { AnnouncementPreviewRequest } from "@/lib/api/types";
 
-/**
- * Same-origin preview target for the announcement editor.
- *
- * The editor needs to re-render on a keystroke debounce, which a Server Action
- * is the wrong shape for: actions serialize behind one another and each one
- * revalidates, so a fast typist would queue a backlog of renders. A route
- * handler is a plain request the client can abort when the next keystroke
- * lands.
- *
- * The admin token still never leaves the server — this reuses the server client
- * and inherits its `requireSession()` gate, so an unauthenticated caller is
- * redirected rather than served.
- *
- * The upstream call resolves every mention target, so the client must debounce
- * (≥ 500 ms) and abort in-flight requests.
- */
+/** Same-origin preview target: a route handler rather than a Server Action, so a
+ *  keystroke can abort it. Debounce ≥ 500 ms; the admin token stays server-side. */
 export async function POST(request: Request) {
   let body: AnnouncementPreviewRequest = {};
 

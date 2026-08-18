@@ -1,19 +1,8 @@
-/**
- * Wire types for the backend, transcribed from `API_INTEGRATION.md` §7.1.
- *
- * These describe what the backend actually sends, not what we wish it sent —
- * every `| null` here is a value the API really produces and the UI has to
- * render something sensible for.
- */
+/** Wire types transcribed from `API_INTEGRATION.md` §7.1 — every `| null` here
+ *  is a value the API really produces and the UI has to render something for. */
 
-/**
- * Every successful response is wrapped in this. The payload is **always** under
- * `data`; flags like `verified` are `data.verified`, never top level.
- *
- * `meta` is present only on paginated list endpoints and is omitted entirely
- * (not nulled) elsewhere. Note that *error* bodies have a different shape — no
- * `statusCode`, no `data` — and are handled in `lib/api/errors.ts`.
- */
+/** Every successful response is wrapped in this; the payload is always under
+ *  `data`. `meta` appears only on paginated lists. Error bodies differ. */
 export type ApiResponse<T> = {
   success: boolean;
   statusCode: number;
@@ -26,6 +15,46 @@ export type PaginationMeta = {
   page: number;
   limit: number;
   total: number;
+};
+
+// ── Multiple Discord servers (API_INTEGRATION.md §5A) ────────────────────────
+
+/** The smallest reference to a configured server. Every row, message and
+ *  fan-out result carries one, so the UI never has to look a guild ID up. */
+export type ServerRef = { guildId: string; label: string };
+
+/** `GET /api/discord/servers` — build every server filter from this rather than
+ *  hard-coding IDs. A single-server deployment returns exactly one entry, which
+ *  is the normal case rather than a separate mode. */
+export type DiscordServer = ServerRef & {
+  /** The live guild name; `null` while the bot cannot reach the guild. */
+  name: string | null;
+  reachable: boolean;
+  unreachableReason: string | null;
+};
+
+/** One server's outcome inside a fan-out action. `ok: false` travels inside an
+ *  HTTP 200 — a failure here is not an error status. */
+export type FanOutServer<T> = ServerRef & {
+  ok: boolean;
+  value?: T;
+  error?: string | null;
+  channelId?: string | null;
+};
+
+/** ⚠️ `failed > 0` with `success: true` is the whole point of this shape. */
+export type FanOutSummary = {
+  total: number;
+  succeeded: number;
+  failed: number;
+};
+
+/** Optional on every payload: a deployment that predates the fan-out still
+ *  answers with the flat single-server fields, which `lib/api/fan-out.ts`
+ *  normalizes into this shape. */
+export type FanOutFields<T> = {
+  summary?: FanOutSummary;
+  servers?: FanOutServer<T>[];
 };
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
@@ -61,11 +90,8 @@ export type AdminProfile = {
   updatedAt: string;
 };
 
-/**
- * `GET /users/me` does **not** include `profile`; only `PUT /users/my-profile`
- * returns it. An admin inserted by hand rather than seeded may have no profile
- * row at all, which is what makes the profile update answer 404.
- */
+/** `GET /users/me` does **not** include `profile`; only `PUT /users/my-profile`
+ *  returns it, and a hand-inserted admin may have no profile row at all. */
 export type AdminUserWithProfile = AdminUser & { profile: AdminProfile | null };
 
 // ── Discord ──────────────────────────────────────────────────────────────────
@@ -79,36 +105,74 @@ export type SyncState = {
   synced: number;
   failed: number;
   markedDeparted: number;
-  /**
-   * The departure guard skipped a reconcile because a member fetch came back
-   * suspiciously small. The directory is stale but intact — this is the guard
-   * working, not a fault.
-   */
+  /** The departure guard skipped a reconcile after a suspiciously small member
+   *  fetch: the directory is stale but intact — the guard working, not a fault. */
   guardTripped: boolean;
   lastError: string | null;
 };
 
-export type DiscordSyncStatus = {
-  bot: { connected: boolean; tag: string | null; guildId: string | null };
-  members: { total: number; active: number; departed: number };
+export type MemberCounts = { total: number; active: number; departed: number };
+
+/** Every server names its channels identically, so a swapped channel ID is
+ *  invisible in configuration *and* in Discord. This check is the only place it
+ *  shows up — when one server goes quiet, read `verified` first. */
+export type ChannelVerification = {
+  id: string | null;
+  verified: boolean;
+  /** The reason it failed verification; `null` when it verified. */
+  error: string | null;
+};
+
+/** One configured server inside `GET /api/discord/sync/status`. */
+export type DiscordServerStatus = ServerRef & {
+  name: string | null;
+  reachable: boolean;
+  unreachableReason: string | null;
+  /** What Discord reports live, against `members` which is what we stored. */
+  discordMemberCount: number | null;
+  members: MemberCounts;
+  channels: {
+    attendance: ChannelVerification;
+    dailyUpdate: ChannelVerification;
+    reminder: ChannelVerification;
+  };
+  verifiedAt: string | null;
   lastSync: SyncState;
+};
+
+/** ⚠️ There is **no top-level `lastSync`** and no `bot.guildId`: sync state is
+ *  per server, because one server tripping its departure guard or failing
+ *  channel verification leaves every other server looking perfectly healthy.
+ *  Use `aggregateSyncState()` where a single combined reading is wanted. */
+export type DiscordSyncStatus = {
+  bot: {
+    connected: boolean;
+    tag: string | null;
+    configuredServers: number;
+    reachableServers: number;
+  };
+  /** Summed across every configured server. Counts memberships, not people. */
+  members: MemberCounts;
+  servers: DiscordServerStatus[];
   dailyUpdate: {
-    /**
-     * `false` means the bot fell back to a login without the Message Content
-     * intent: every message arrives empty, so no daily update is being
-     * recorded at all. Silent, and catastrophic for the status dashboard.
-     */
+    /** `false` means the bot logged in without the Message Content intent, so
+     *  no daily update is being recorded at all. Silent, and catastrophic. It is
+     *  a property of the connection, so it is reported once rather than per
+     *  server. */
     ingestionEnabled: boolean;
     reason: string | null;
-    channelId: string | null;
   };
 };
 
-/** `POST /discord/sync` answers 202 — nothing has happened yet. Poll status. */
+/** `POST /discord/sync` answers 202 — nothing has happened yet. Poll status.
+ *  Takes an optional `guildId` (singular) to sync one server. */
 export type SyncTriggerResult = {
-  accepted: true;
-  guildId: string;
-  startedAt: string;
+  /** Guild IDs whose sync actually started. */
+  accepted: string[];
+  /** Servers left alone, each with the reason — a sync already running, or a
+   *  guild that could not be fetched. Not an error: the others still ran. */
+  skipped: { guildId: string; reason: string }[];
+  startedAt?: string;
 };
 
 // ── Schedule ─────────────────────────────────────────────────────────────────
@@ -122,6 +186,19 @@ export type ScheduleLastRun = {
   error: string | null;
 };
 
+/** One configured server's live `#daily-update` state. Flat, not nested: this
+ *  is exactly the shape `GET /api/schedule/daily-update` returns. */
+export type ScheduleServerState = ServerRef & {
+  channelId: string | null;
+  /** Read live from Discord per request. ⚠️ `null` means it could not be read —
+   *  unknown, which is not the same as locked and must not render as one. */
+  isOpen: boolean | null;
+  lastRun: ScheduleLastRun | null;
+};
+
+/** ⚠️ There is **no top-level `channel`**: one schedule drives every server, but
+ *  each channel is opened and locked separately and they can disagree. The
+ *  combined reading is derived from `servers[]`, never reported as a fact. */
 export type ChannelSchedulePayload = {
   schedule: {
     /** `HH:mm` wall clock, Asia/Dhaka. */
@@ -142,16 +219,22 @@ export type ChannelSchedulePayload = {
     /** `null` when no task is registered — a disabled schedule, or a non-scheduling process. */
     nextOpenAt: string | null;
     nextLockAt: string | null;
-    lastRun: ScheduleLastRun | null;
+    /** Keyed by guild ID, for the same reason the state is: one server's
+     *  success must not overwrite another's missing-permission failure. */
+    lastRunByGuild: Record<string, ScheduleLastRun>;
   };
-  /** `isOpen` is read live from Discord on every request, so never cache this. */
-  channel: { id: string | null; isOpen: boolean };
+  servers: ScheduleServerState[];
 };
 
+/** `POST /schedule/daily-update/open` and `/lock` fan out to every configured
+ *  server. ⚠️ Partial success is HTTP 200 — read `summary.failed`, never the
+ *  status code alone. */
 export type ChannelToggleResult = {
-  channelId: string | null;
   isOpen: boolean;
-  announced: boolean;
+  summary: FanOutSummary;
+  servers: (FanOutServer<{ announced: boolean }> & {
+    channelId: string | null;
+  })[];
 };
 
 /** A patch body. Every field optional, but an empty object is rejected (400). */
@@ -164,11 +247,8 @@ export type SchedulePatch = {
 
 // ── Attendance announcement ──────────────────────────────────────────────────
 
-/**
- * The only tokens a template body may contain. The backend rejects anything
- * else with a 400 that names the offender — left in the text an unknown
- * placeholder would reach ~5,000 students as literal characters.
- */
+/** The only tokens a template body may contain; anything else is a 400. Left in,
+ *  an unknown placeholder would reach ~5,000 students as literal characters. */
 export type AnnouncementPlaceholder =
   | "{{date}}"
   | "{{close_time}}"
@@ -222,19 +302,12 @@ export type AnnouncementDispatchResult =
 
 export type AnnouncementPayload = {
   template: {
-    /**
-     * The **raw** body, placeholders unexpanded. This is what an editor binds
-     * to — round-tripping `preview.content` back through a save would bake
-     * today's date permanently into the stored template.
-     */
+    /** The **raw** body, placeholders unexpanded — round-tripping
+     *  `preview.content` back through a save would bake today's date in. */
     body: string;
     terminationDays: number;
-    /**
-     * Pings the entire guild every evening until turned off. The only way the
-     * announcement can notify everyone: a literal `@everyone` typed into the
-     * body is inert, because `allowedMentions` is built from this allowlist
-     * alone and never parsed out of the text.
-     */
+    /** Pings the entire guild every evening until turned off. A literal
+     *  `@everyone` in the body is inert; `allowedMentions` uses this flag alone. */
     mentionEveryone: boolean;
     mentionRoleIds: string[];
     mentionUsernames: string[];
@@ -265,20 +338,34 @@ export type AnnouncementPayload = {
     processEnabled: boolean;
     running: boolean;
     nextRunAt: string | null;
-    /** Where a missing `Send Messages` permission first becomes visible. */
-    lastOutcome: {
-      ranAt: string;
-      trigger: "SCHEDULED" | "MANUAL";
-      result: AnnouncementDispatchResult;
-    } | null;
+    /** Where a missing `Send Messages` permission first becomes visible, keyed
+     *  per guild — a single slot would let a healthy server's success overwrite
+     *  the failing server's reason. */
+    lastOutcomeByGuild: Record<string, AnnouncementOutcome>;
   };
-  channel: { id: string | null };
+  /** ⚠️ There is **no top-level `channel`** and **no `today.attempts`**: both
+   *  are per server, since each server has its own channel and its own
+   *  once-per-day claim. */
   today: {
     /** `YYYY-MM-DD`, Dhaka. */
     date: string;
+    /** ⚠️ True only when **every** configured server has today's message. */
     posted: boolean;
-    attempts: AnnouncementAttempt[];
+    servers: AnnouncementServerToday[];
   };
+};
+
+export type AnnouncementOutcome = {
+  ranAt: string;
+  trigger: "SCHEDULED" | "MANUAL";
+  result: AnnouncementDispatchResult;
+};
+
+export type AnnouncementServerToday = ServerRef & {
+  posted: boolean;
+  channelId: string | null;
+  attempts: AnnouncementAttempt[];
+  lastOutcome: AnnouncementOutcome | null;
 };
 
 export type AnnouncementPreview = {
@@ -291,12 +378,22 @@ export type AnnouncementPreview = {
   supportedPlaceholders: AnnouncementPlaceholder[];
 };
 
+/** The manual send fans out across every configured server unless `guildIds`
+ *  narrows it. ⚠️ Partial success is HTTP 200 — read `summary.failed`. Each
+ *  server takes its own day-claim, so one failure never consumes another's day. */
+/** ⚠️ Its own envelope, **not** the `ok`/`summary.succeeded` shape the channel
+ *  toggles use: each server reports a dispatch `status`, because "already sent"
+ *  is neither a success nor a failure — it is the day-claim working. Partial
+ *  success is HTTP 200; a total failure is the only error status. */
 export type AnnouncementSendResult = {
   announcementDate: string;
-  attempt: number;
-  discordMessageId: string;
-  unresolvedTargets: string[];
-  channelId: string | null;
+  summary: {
+    total: number;
+    posted: number;
+    failed: number;
+    alreadySent: number;
+  };
+  servers: (ServerRef & AnnouncementDispatchResult)[];
 };
 
 /** A patch body. Every field optional, but an empty object is rejected (400). */
@@ -319,18 +416,8 @@ export type AnnouncementPreviewRequest = {
 
 // ── Attendance window (public — see `lib/attendance-window.ts`) ───────────────
 
-/**
- * ⚠️ Not reachable over HTTP yet. See `BACKEND_REQUIREMENTS.md` §2.
- *
- * The window governing when the public attendance form accepts submissions is
- * the `#daily-update` schedule, which today is readable only from the
- * **admin-only** `GET /api/schedule/daily-update`. Students have no credential,
- * so the homepage needs a public projection of the same row.
- *
- * `getAttendanceWindow()` fails **open** while the route is absent: the form
- * renders exactly as it does now, so shipping this ahead of the backend changes
- * nothing, and the gate switches itself on the moment the route appears.
- */
+/** ⚠️ Not reachable over HTTP yet (`BACKEND_REQUIREMENTS.md` §2) — the window is
+ *  admin-only today, so `getAttendanceWindow()` fails open until the route ships. */
 export type AttendanceWindow = {
   /** Whether the window is open *right now*, per the schedule. */
   isOpen: boolean;
@@ -365,40 +452,95 @@ export type ReminderDeliveryStatus =
   | "DM_CLOSED"
   | "FAILED";
 
+/** Which failure targets a person. ⚠️ `MISSING_UPDATE` is the default on
+ *  purpose: it is exactly what a broadcast meant before ranges existed, and
+ *  making `MISSING_BOTH` universal would silently stop reminding a student who
+ *  files attendance and never posts an update. */
+export type ReminderCriterion = "MISSING_UPDATE" | "MISSING_BOTH";
+
+/** One **member record**, not one person: an account behind in two servers
+ *  appears twice here, which is the per-server audit trail. The queue collapses
+ *  them into one DM per account before anything is sent. */
 export type ReminderTarget = {
   memberId: string;
+  guildId: string;
   discordUserId: string;
   discordUsername: string;
   displayName: string | null;
+  /** How many counted days this member failed the criterion. */
+  missedDays: number;
+};
+
+/** The period every reminder payload echoes back. A single-date send stores the
+ *  same date at both ends; **`reminderDate` no longer exists**. */
+export type ReminderPeriod = {
+  reminderStartDate: string;
+  reminderEndDate: string;
+  criterion: ReminderCriterion;
+  minMissedDays: number;
+  /** ⚠️ `null` (or empty, on a history row) means **every day counted** — the
+   *  opposite of the channel schedule, where an empty weekday set is invalid. */
+  daysOfWeek: number[] | null;
 };
 
 /** `targets` is **not** paginated — it can be thousands of rows. */
 export type ReminderTargetsPayload = {
-  date: string;
+  mode?: PeriodMode;
+  /** Date mode echo. */
+  date?: string;
+  /** Range mode echo. */
+  from?: string;
+  to?: string;
+  daysInRange?: number;
+  daysOfWeek?: number[] | null;
+  criterion?: ReminderCriterion;
+  minMissedDays?: number;
+  /** Recipient rows — the per-server audit trail. */
   targetCount: number;
+  /** People actually DMed. One account gets exactly one DM however many
+   *  servers targeted it, so this can be lower than `targetCount`. */
+  uniqueRecipients?: number;
   targets: ReminderTarget[];
 };
 
+/** Body for `POST /api/reminders/send`. Exactly one of `date` or `from`/`to`. */
+export type ReminderSendInput = {
+  date?: string;
+  from?: string;
+  to?: string;
+  daysOfWeek?: number[];
+  criterion?: ReminderCriterion;
+  minMissedDays?: number;
+  message: string;
+  /** Omitted means every configured server. */
+  guildIds?: string[];
+};
+
+/** `POST /reminders/send` answers 202 with the period it resolved — the same
+ *  echo the preview returns, not the stored `reminderStartDate` pair. */
 export type ReminderQueued = {
   id: string;
-  reminderDate: string;
+  mode?: PeriodMode;
+  date?: string;
+  from?: string;
+  to?: string;
+  daysInRange?: number;
+  daysOfWeek?: number[] | null;
+  criterion?: ReminderCriterion;
+  minMissedDays?: number;
   targetCount: number;
   queuedJobs: number;
   status: ReminderStatus;
 };
 
-/**
- * Read from the recipient rows rather than the session row's cached counters,
- * which is why the field names differ from `ReminderLogRow`. The invariant
- * `delivered + dmClosed + failed + outstanding === targetCount` holds, so a
- * progress bar can be driven straight from these.
- */
-export type ReminderProgress = {
+/** Read from the recipient rows, not the session row's cached counters, so
+ *  `delivered + dmClosed + failed + outstanding === targetCount` holds. */
+export type ReminderProgress = ReminderPeriod & {
   id: string;
-  reminderDate: string;
   message: string;
   status: ReminderStatus;
   targetCount: number;
+  uniqueRecipients?: number;
   delivered: number;
   dmClosed: number;
   failed: number;
@@ -409,9 +551,8 @@ export type ReminderProgress = {
   createdAt: string;
 };
 
-export type ReminderLogRow = {
+export type ReminderLogRow = ReminderPeriod & {
   id: string;
-  reminderDate: string;
   message: string;
   targetCount: number;
   sentCount: number;
@@ -454,18 +595,21 @@ export type ReminderQueueStatus = {
     delayed: number;
     failed: number;
   } | null;
-  lastFallback: {
-    reminderId: string;
-    ranAt: string;
-    ok: boolean;
-    mentioned: number;
-    error: string | null;
-    /**
-     * A silent failure: every DM delivered, and the channel announcement that
-     * was supposed to catch the DM-closed members reached nobody.
-     */
-    missingPermission: boolean;
-  } | null;
+  /** ⚠️ Keyed per guild, not a single slot: the fallback runs once per server,
+   *  and one healthy server's success must not overwrite the server where the
+   *  channel announcement reached nobody. */
+  lastFallbackByGuild: Record<string, ReminderFallback>;
+};
+
+export type ReminderFallback = {
+  reminderId: string;
+  ranAt: string;
+  ok: boolean;
+  mentioned: number;
+  error: string | null;
+  /** A silent failure: every DM delivered, but the channel announcement meant
+   *  to catch the DM-closed members reached nobody. */
+  missingPermission: boolean;
 };
 
 // ── Attendance (public) ──────────────────────────────────────────────────────
@@ -478,22 +622,25 @@ export type VerifiedMember = {
   avatarUrl: string | null;
 };
 
-/**
- * `GET /attendance/verify-user` answers **HTTP 200 even for an unknown
- * handle** — branch on `verified`, never on the status. `member` is always
- * `null` when `verified` is `false`; there is no partial disclosure.
- */
+/** `GET /attendance/verify-user` answers **200 even for an unknown handle** —
+ *  branch on `verified`. `member` is always `null` when `verified` is false. */
 export type VerifyUserPayload = {
   verified: boolean;
+  /** ⚠️ True only when **every** server the handle is in already has today's
+   *  row — someone in two servers who submitted in one still has work to do. */
   alreadySubmitted: boolean;
   attendanceDate: string;
   member: VerifiedMember | null;
+  servers?: (ServerRef & { alreadySubmitted: boolean })[];
 };
 
 export type SubmitAttendancePayload = {
   attendanceDate: string;
   submittedAt: string;
   member: VerifiedMember;
+  /** One row is written per server, in a single transaction. The student
+   *  submits once; the form never asks them to pick a server. */
+  servers?: (ServerRef & { recorded: boolean })[];
 };
 
 export type AttendanceSubmitInput = {
@@ -503,7 +650,7 @@ export type AttendanceSubmitInput = {
   discordUsername: string;
 };
 
-// ── Daily status (API_INTEGRATION.md §8.8) ───────────────────────────────────
+// ── Daily status (API_INTEGRATION.md §8.8, §5A) ──────────────────────────────
 
 export type DailyStatus =
   | "COMPLETE"
@@ -511,14 +658,36 @@ export type DailyStatus =
   | "MISSING_ATTENDANCE"
   | "MISSING_BOTH";
 
-export type DailyStatusMember = {
+/** The three-bucket rollup a range collapses to, derived from `completeDays`. */
+export type RangeStatus = "ALL_COMPLETE" | "PARTIAL" | "NONE";
+
+/** Which figure the request was answered in. Echoed on every payload so the
+ *  shape is never inferred from the presence of a field. */
+export type PeriodMode = "date" | "range";
+
+/** Every row is one PERSON, not one server membership: a student in two servers
+ *  posting an update in either is COMPLETE in both, and is one row here. */
+type DailyStatusPerson = {
+  /** The representative member record — resolves to the whole person, whichever
+   *  server's record it names. Use it for `/members/:memberId`. */
   memberId: string;
+  /** Every member record behind this row, aligned with `servers`. */
+  memberIds?: string[];
   discordUserId: string;
   discordUsername: string;
   displayName: string | null;
   name: string | null;
   phone: string | null;
   email: string | null;
+  /** Every server this person is in — narrowed by a `guildId` filter. */
+  servers?: ServerRef[];
+  /** How many servers hold the account **in total**, never narrowed. So
+   *  `servers.length === 1 && serverCount === 2` inside a filtered view means
+   *  "also in another server". */
+  serverCount?: number;
+};
+
+export type DailyStatusMember = DailyStatusPerson & {
   hasAttendance: boolean;
   hasDailyUpdate: boolean;
   status: DailyStatus;
@@ -526,16 +695,37 @@ export type DailyStatusMember = {
   attendanceSubmittedAt: string | null;
 };
 
-/** Alias for DailyStatusMember matching API_INTEGRATION.md naming */
-export type DailyStatusRow = DailyStatusMember;
+/** In range mode the single-day status is replaced by counts over the span.
+ *  ⚠️ `incompleteDays` and `missedBothDays` are different numbers, and there is
+ *  deliberately no field called `missedDays`. */
+export type DailyStatusRangeMember = DailyStatusPerson & {
+  /** Counted days — the denominator of everything below. */
+  daysInRange: number;
+  attendanceDays: number;
+  /** Days they posted a daily update, in **any** server. */
+  updateDays: number;
+  completeDays: number;
+  /** `daysInRange - completeDays`. */
+  incompleteDays: number;
+  /** Neither attendance nor an update. What the reminder threshold acts on. */
+  missedBothDays: number;
+  missedUpdateDays: number;
+  rangeStatus: RangeStatus;
+  /** The most recent submission inside the range, or `null`. */
+  attendanceSubmittedAt?: string | null;
+};
 
-/**
- * The seven overview figures. They interlock and must agree, so they come from
- * this one endpoint only (`GET /api/daily-status/counts`).
- * Invariant: `bothComplete + missingUpdateOnly + missingAttendanceOnly + missingBoth === totalMembers`.
- */
-export type DailyStatusCounts = {
-  date: string;
+export type DailyStatusRow = DailyStatusMember | DailyStatusRangeMember;
+
+/** Narrowing helper — range rows carry counts, date rows carry a status. */
+export function isRangeRow(
+  row: DailyStatusRow,
+): row is DailyStatusRangeMember {
+  return "rangeStatus" in row;
+}
+
+/** The seven single-date overview figures. They count **people**. */
+export type DailyStatusFigures = {
   totalMembers: number;
   attendanceSubmitted: number;
   dailyUpdateSubmitted: number;
@@ -545,25 +735,117 @@ export type DailyStatusCounts = {
   missingBoth: number;
 };
 
+/** Range figures count **person-days**, and are named differently on purpose. */
+export type DailyStatusRangeFigures = {
+  totalMembers: number;
+  allCompleteMembers: number;
+  partialMembers: number;
+  noneMembers: number;
+  attendanceDays: number;
+  updateDays: number;
+  completeDays: number;
+  missedBothDays: number;
+};
+
+/** ⚠️ `byServer` does **not** sum to the combined totals, and that is not a bug:
+ *  the combined figures count people, `byServer` counts memberships. Show them
+ *  as two readings, never as a total and its parts. */
+export type DailyStatusCounts = DailyStatusFigures & {
+  mode?: "date";
+  date: string;
+  byServer?: (ServerRef & DailyStatusFigures)[];
+};
+
+export type DailyStatusRangeCounts = DailyStatusRangeFigures & {
+  mode?: "range";
+  from: string;
+  to: string;
+  /** Echoed with its denominator, because `daysOfWeek` is an admin assertion
+   *  rather than a record of when the channel was actually open. */
+  daysInRange: number;
+  /** `null` means every day in the span counted. */
+  daysOfWeek?: number[] | null;
+  byServer?: (ServerRef & DailyStatusRangeFigures)[];
+};
+
+export type DailyStatusAnyCounts = DailyStatusCounts | DailyStatusRangeCounts;
+
+export function isRangeCounts(
+  counts: DailyStatusAnyCounts,
+): counts is DailyStatusRangeCounts {
+  return "daysInRange" in counts;
+}
+
 export type DailyStatusMessage = {
   id: string;
   content: string;
   postedAt: string;
+  /** Where it was posted. Both servers' messages merge into one timeline. */
+  guildId?: string;
+  serverLabel?: string;
+};
+
+/** One counted day inside a range detail, so a person's span can be read day
+ *  by day rather than only as a total. */
+export type DailyStatusDay = {
+  date: string;
+  hasAttendance: boolean;
+  hasDailyUpdate: boolean;
+  status: DailyStatus;
 };
 
 export type DailyStatusMemberDetail = DailyStatusMember & {
   messages: DailyStatusMessage[];
 };
 
-/** Alias for DailyStatusMemberDetail matching API_INTEGRATION.md naming */
+export type DailyStatusRangeMemberDetail = DailyStatusRangeMember & {
+  messages: DailyStatusMessage[];
+  /** Weekdays excluded by `daysOfWeek` are absent from this array. */
+  days: DailyStatusDay[];
+};
+
+export type DailyStatusAnyMemberDetail =
+  | DailyStatusMemberDetail
+  | DailyStatusRangeMemberDetail;
+
+export function isRangeDetail(
+  detail: DailyStatusAnyMemberDetail,
+): detail is DailyStatusRangeMemberDetail {
+  return "rangeStatus" in detail;
+}
+
+/** Alias kept for readers following API_INTEGRATION.md naming. */
 export type MemberDailyStatus = DailyStatusMemberDetail;
 
+/** Sorting. The last three are range-only; using one in date mode is a 400. */
+export type DailyStatusSortBy =
+  | "discordUsername"
+  | "name"
+  | "status"
+  | "missedBothDays"
+  | "completeDays"
+  | "rangeStatus";
+
 export type DailyStatusQuery = {
-  date: string;
+  /** Exactly one of `date` or the `from`/`to` pair — sending both is a 400. */
+  date?: string;
+  from?: string;
+  to?: string;
+  /** Range mode only. `0` is Sunday, as everywhere else. */
+  daysOfWeek?: number[];
+  /** Omitted means every configured server. */
+  guildId?: string;
   page?: number;
   limit?: number;
+  /** Date mode only. */
   status?: DailyStatus;
+  /** Range mode only. */
+  rangeStatus?: RangeStatus;
+  /** Range mode only — the same threshold the reminder send uses. */
+  minMissedBothDays?: number;
   search?: string;
+  sortBy?: DailyStatusSortBy;
+  sortDir?: "asc" | "desc";
 };
 
 /** Alias for AttendanceWindow matching API_INTEGRATION.md naming */

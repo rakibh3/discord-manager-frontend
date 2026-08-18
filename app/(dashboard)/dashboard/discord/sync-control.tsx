@@ -8,20 +8,14 @@ import { toast } from "sonner";
 import { triggerMemberSync } from "@/actions/discord";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { aggregateSyncState } from "@/lib/api/derive";
 import type { DiscordSyncStatus } from "@/lib/api/types";
 import { formatDhaka, formatDuration } from "@/lib/dhaka-date";
 
 const POLL_INTERVAL_MS = 5000;
 
-/**
- * Manual re-sync, plus the live view of a sync in flight.
- *
- * `POST /discord/sync` answers 202 before the work happens, so the only way to
- * know it finished is to poll status until `lastSync.running` is `false`.
- * Polling runs **only** while a sync is actually running: an interval that
- * keeps firing on an idle page is a request every five seconds, forever, for
- * data nobody is watching change.
- */
+/** Manual re-sync plus the live view of one in flight. `POST /discord/sync`
+ *  answers 202, so status is polled — only while a sync is actually running. */
 export function SyncControl({
   initial,
   botConnected,
@@ -32,17 +26,20 @@ export function SyncControl({
   const router = useRouter();
   const [status, setStatus] = useState(initial);
   const [pending, startTransition] = useTransition();
-  const [polling, setPolling] = useState(initial.lastSync.running);
-  const wasRunning = useRef(initial.lastSync.running);
+  // Sync runs per server and the payload carries no combined figure, so one is
+  // derived: any server still running keeps the poll alive.
+  const [polling, setPolling] = useState(
+    () => aggregateSyncState(initial.servers).running,
+  );
+  const wasRunning = useRef(aggregateSyncState(initial.servers).running);
 
-  // Server-rendered status supersedes anything polled, so a router refresh or a
-  // revalidation is never overwritten by stale client state. Adjusted during
-  // render rather than in an effect, which would show one stale frame first.
+  // Server-rendered status supersedes anything polled. Adjusted during render,
+  // not in an effect, which would show one stale frame first.
   const [seenInitial, setSeenInitial] = useState(initial);
   if (seenInitial !== initial) {
     setSeenInitial(initial);
     setStatus(initial);
-    if (initial.lastSync.running) setPolling(true);
+    if (aggregateSyncState(initial.servers).running) setPolling(true);
   }
 
   useEffect(() => {
@@ -64,23 +61,24 @@ export function SyncControl({
 
         setStatus(next);
 
-        if (!next.lastSync.running) {
+        const nextSync = aggregateSyncState(next.servers);
+
+        if (!nextSync.running) {
           setPolling(false);
           // Pull the server-rendered panels back in step with the final counts.
           router.refresh();
           if (wasRunning.current) {
             toast.success(
-              next.lastSync.lastError
+              nextSync.lastError
                 ? "Sync finished with an error. See the last-sync panel."
                 : "Member sync finished.",
             );
           }
         }
-        wasRunning.current = next.lastSync.running;
+        wasRunning.current = nextSync.running;
       } catch {
-        // A dropped tick is not worth surfacing — the next one retries, and an
-        // error toast every five seconds during a network blip is worse than
-        // a progress display that pauses.
+        // A dropped tick is not worth surfacing — the next one retries, and a
+        // toast every five seconds during a blip is worse than a paused display.
       }
     }, POLL_INTERVAL_MS);
 
@@ -108,7 +106,8 @@ export function SyncControl({
     });
   }, []);
 
-  const running = status.lastSync.running;
+  const sync = aggregateSyncState(status.servers);
+  const running = sync.running;
   const busy = running || pending;
 
   return (
@@ -133,9 +132,9 @@ export function SyncControl({
       {/* Announced politely so a screen reader hears the sync finish. */}
       <p role="status" aria-live="polite" className="text-muted-foreground text-sm">
         {running
-          ? `Syncing since ${formatDhaka(status.lastSync.startedAt, "time")} — fetched ${status.lastSync.fetched.toLocaleString()} so far.`
-          : status.lastSync.finishedAt
-            ? `Last sync finished ${formatDhaka(status.lastSync.finishedAt)} in ${formatDuration(status.lastSync.durationMs)}.`
+          ? `Syncing since ${formatDhaka(sync.startedAt, "time")} — fetched ${sync.fetched.toLocaleString()} so far across ${status.servers.length} server${status.servers.length === 1 ? "" : "s"}.`
+          : sync.finishedAt
+            ? `Last sync finished ${formatDhaka(sync.finishedAt)} in ${formatDuration(sync.durationMs)}.`
             : "No sync has run on this process yet."}
       </p>
     </div>

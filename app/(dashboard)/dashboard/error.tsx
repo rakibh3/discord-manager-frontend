@@ -6,16 +6,8 @@ import { useEffect } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 
-/**
- * Every failure in this segment lands here, and almost all of them are one of
- * two things: the backend is not running, or a specific endpoint returned an
- * error. Both deserve a sentence an admin can act on — a stack trace tells them
- * nothing, and a bare "Something went wrong" tells them less.
- *
- * The API base URL is server-only, so it cannot be named from a client
- * component. `lib/api/client.ts` puts it into the message for a transport
- * failure instead, which is where it is actually useful.
- */
+/** Almost every failure here is the backend being down or one endpoint erroring,
+ *  so the copy gives an admin something to act on rather than a stack trace. */
 export default function DashboardError({
   error,
   reset,

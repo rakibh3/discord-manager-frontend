@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import { ManualOverride } from "./manual-override";
 import { ScheduleEditor } from "./schedule-editor";
+import { ServerChannels } from "./server-channels";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -14,18 +15,16 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  combinedChannelState,
+  latestScheduleRun,
+} from "@/lib/api/derive";
 import type { ChannelSchedulePayload } from "@/lib/api/types";
 import { formatDhaka, formatWallClock } from "@/lib/dhaka-date";
 import { explainScheduleError, formatWeekdays } from "@/lib/validation/schedule";
 
-/**
- * Owns the displayed schedule state.
- *
- * A `PATCH` and a manual open/lock both return authoritative fresh payloads, so
- * they replace what is on screen directly rather than waiting for a
- * revalidation round trip. `initial` still wins whenever the server re-renders,
- * so nothing here can drift from the server's view.
- */
+/** Owns the displayed schedule state: PATCH and manual open/lock return fresh
+ *  payloads that replace it directly, and `initial` wins on every server render. */
 export function ScheduleView({ initial }: { initial: ChannelSchedulePayload }) {
   const [payload, setPayload] = useState(initial);
 
@@ -37,8 +36,17 @@ export function ScheduleView({ initial }: { initial: ChannelSchedulePayload }) {
     setPayload(initial);
   }
 
-  const { schedule, scheduler, channel } = payload;
-  const permissionHint = explainScheduleError(scheduler.lastRun?.error ?? null);
+  const { schedule, scheduler } = payload;
+  const servers = payload.servers;
+  // There is no single channel: the payload reports one per server. The headline
+  // badge is therefore a summary, and says so — claiming "Open" while one server
+  // is locked would be a lie the admin cannot see through.
+  const channelState = combinedChannelState(servers);
+  const { openCount, mixed } = channelState;
+  // A failure outranks a later success here, because the failing server is the
+  // one that needs acting on.
+  const lastRun = latestScheduleRun(scheduler);
+  const permissionHint = explainScheduleError(lastRun?.error ?? null);
 
   return (
     <div className="flex flex-col gap-4">
@@ -63,13 +71,28 @@ export function ScheduleView({ initial }: { initial: ChannelSchedulePayload }) {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               Channel state
-              <Badge variant={channel.isOpen ? "secondary" : "outline"}>
-                {channel.isOpen ? "Open" : "Locked"}
+              <Badge
+                variant={
+                  mixed
+                    ? "warning"
+                    : channelState.isOpen
+                      ? "secondary"
+                      : "outline"
+                }
+              >
+                {mixed
+                  ? `Open in ${openCount} of ${servers.length}`
+                  : channelState.isOpen
+                    ? "Open"
+                    : "Locked"}
               </Badge>
             </CardTitle>
             <CardDescription>
               Read live from Discord on every page load, so this reflects manual
               permission edits made in Discord as well as anything done here.
+              {servers.length > 1
+                ? " One schedule drives every server, but each channel is toggled separately."
+                : null}
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
@@ -109,8 +132,14 @@ export function ScheduleView({ initial }: { initial: ChannelSchedulePayload }) {
                 </dd>
               </div>
               <div className="flex flex-col gap-0.5">
-                <dt className="text-muted-foreground text-xs">Channel ID</dt>
-                <dd className="font-mono text-sm">{channel.id ?? "—"}</dd>
+                <dt className="text-muted-foreground text-xs">
+                  {servers.length === 1 ? "Channel ID" : "Channels"}
+                </dt>
+                <dd className="font-mono text-sm">
+                  {servers.length === 1
+                    ? (servers[0]?.channelId ?? "—")
+                    : `${servers.length} servers`}
+                </dd>
               </div>
               <div className="flex flex-col gap-0.5">
                 <dt className="text-muted-foreground text-xs">
@@ -135,38 +164,38 @@ export function ScheduleView({ initial }: { initial: ChannelSchedulePayload }) {
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
-            {scheduler.lastRun ? (
+            {lastRun ? (
               <>
                 <dl className="grid gap-3 sm:grid-cols-2">
                   <div className="flex flex-col gap-0.5">
                     <dt className="text-muted-foreground text-xs">Action</dt>
                     <dd className="text-sm font-medium capitalize">
-                      {scheduler.lastRun.action} (
-                      {scheduler.lastRun.trigger})
+                      {lastRun.action} (
+                      {lastRun.trigger})
                     </dd>
                   </div>
                   <div className="flex flex-col gap-0.5">
                     <dt className="text-muted-foreground text-xs">Ran at</dt>
                     <dd className="text-sm font-medium">
-                      {formatDhaka(scheduler.lastRun.ranAt)}
+                      {formatDhaka(lastRun.ranAt)}
                     </dd>
                   </div>
                   <div className="flex flex-col gap-0.5">
                     <dt className="text-muted-foreground text-xs">Outcome</dt>
                     <dd className="text-sm font-medium">
-                      {scheduler.lastRun.ok ? "Succeeded" : "Failed"}
+                      {lastRun.ok ? "Succeeded" : "Failed"}
                     </dd>
                   </div>
                 </dl>
 
-                {scheduler.lastRun.error ? (
+                {lastRun.error ? (
                   <Alert variant="destructive">
                     <AlertTriangle />
                     <AlertTitle>The last run failed</AlertTitle>
                     <AlertDescription className="flex flex-col gap-2">
                       {permissionHint ? <span>{permissionHint}</span> : null}
                       <code className="bg-muted text-muted-foreground overflow-x-auto rounded p-2 font-mono text-xs">
-                        {scheduler.lastRun.error}
+                        {lastRun.error}
                       </code>
                     </AlertDescription>
                   </Alert>
@@ -181,6 +210,8 @@ export function ScheduleView({ initial }: { initial: ChannelSchedulePayload }) {
           </CardContent>
         </Card>
       </div>
+
+      <ServerChannels payload={payload} onRefreshed={setPayload} />
 
       <Card>
         <CardHeader>

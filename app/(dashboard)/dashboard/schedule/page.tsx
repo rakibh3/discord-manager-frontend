@@ -8,9 +8,8 @@ import { getSchedule } from "@/lib/api/endpoints/schedule";
 export const metadata: Metadata = { title: "Schedule" };
 
 async function Schedule() {
-  // Uncached by design: `channel.isOpen` costs a live Discord read on every
-  // request, and a stale value here would misrepresent whether ~5,000 students
-  // can currently post.
+  // Uncached by design: `channel.isOpen` costs a live Discord read, and a stale
+  // value would misrepresent whether students can currently post.
   const payload = await getSchedule();
   return <ScheduleView initial={payload} />;
 }

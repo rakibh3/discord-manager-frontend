@@ -16,22 +16,14 @@ import { Button } from "@/components/ui/button";
 import { isActive, NAV_ITEMS } from "@/components/dashboard/nav-items";
 import { cn } from "@/lib/utils";
 
-/**
- * Navigation for viewports below the sidebar breakpoint.
- *
- * `Dialog` is doing the accessibility work here: it traps focus while open,
- * closes on Escape, restores focus to the trigger on dismiss, and labels itself
- * from `DialogTitle`. Hand-rolling a disclosure panel would mean reimplementing
- * all of that, and the mobile toggle is exactly where keyboard users get
- * stranded when it is done by hand.
- */
+/** Navigation below the sidebar breakpoint. `Dialog` does the accessibility work
+ *  — focus trap, Escape, focus restore, labelling from `DialogTitle`. */
 export function MobileNav({ footer }: { footer?: React.ReactNode }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
 
-  // A completed navigation dismisses the panel; otherwise the new page renders
-  // behind an overlay the admin has to close by hand. Adjusted during render,
-  // so the panel is already gone on the first frame of the new route.
+  // A completed navigation dismisses the panel. Adjusted during render, so it is
+  // already gone on the first frame of the new route.
   const [seenPathname, setSeenPathname] = useState(pathname);
   if (seenPathname !== pathname) {
     setSeenPathname(pathname);

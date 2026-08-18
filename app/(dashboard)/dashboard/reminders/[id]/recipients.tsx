@@ -48,13 +48,8 @@ function badgeVariant(
   }
 }
 
-/**
- * The delivery audit.
- *
- * Contact details are deliberately absent — the backend does not expose phone
- * or email on this endpoint, because this is a record of what was delivered,
- * not a member directory.
- */
+/** The delivery audit. Contact details are deliberately absent — this is a
+ *  record of what was delivered, not a member directory. */
 export async function RecipientAudit({
   id,
   page,

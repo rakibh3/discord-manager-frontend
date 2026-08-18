@@ -22,14 +22,8 @@ import { Switch } from "@/components/ui/switch";
 import type { ChannelSchedulePayload } from "@/lib/api/types";
 import { validateSchedulePatch, WEEKDAYS } from "@/lib/validation/schedule";
 
-/**
- * The schedule editor: two time inputs and seven weekday checkboxes.
- *
- * **There is deliberately no cron field.** The cron expression is derived at
- * registration and never stored, so exposing one would be a second source of
- * truth that the backend would ignore. `timezone` is never sent either — the
- * zone is fixed at Asia/Dhaka and is reported back to us, not set by us.
- */
+/** Two time inputs and seven weekday checkboxes. No cron field (derived at
+ *  registration, never stored) and no `timezone` — the zone is fixed at Asia/Dhaka. */
 export function ScheduleEditor({
   payload,
   onUpdated,
@@ -49,10 +43,8 @@ export function ScheduleEditor({
   const openId = useId();
   const closeId = useId();
 
-  // A save — or another admin's change arriving via revalidation — resets the
-  // form's baseline, so "nothing has changed" stays accurate. Adjusted during
-  // render rather than in an effect, which would briefly show the old values
-  // in the inputs after a successful save.
+  // A save or another admin's change resets the form's baseline. Adjusted during
+  // render, not in an effect, which would show the old values for one frame.
   const [seenStored, setSeenStored] = useState(stored);
   if (seenStored !== stored) {
     setSeenStored(stored);
@@ -76,8 +68,7 @@ export function ScheduleEditor({
     event.preventDefault();
 
     // Mirrors the backend's three rejections — empty patch, no weekday, and
-    // `closeTime > openTime` judged against the *merged* row — so the admin
-    // finds out here rather than after a round trip.
+    // `closeTime > openTime` judged against the merged row.
     const validation = validateSchedulePatch(stored, {
       openTime,
       closeTime,

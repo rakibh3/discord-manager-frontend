@@ -11,17 +11,8 @@ import {
   writeSession,
 } from "@/lib/auth/session";
 
-/**
- * The server-only fetch layer for the admin API.
- *
- * Everything authenticated goes browser → Next server → backend. The access
- * token stays in an httpOnly cookie, refresh-and-retry lives here rather than
- * in every component, and the hot path has no CORS preflight. `server-only`
- * makes an accidental client import a build failure rather than a token leak.
- *
- * The public attendance form is the deliberate exception — it calls the backend
- * browser-direct and does not use this module.
- */
+/** The server-only fetch layer for the admin API: the token stays in an httpOnly
+ *  cookie and refresh-and-retry lives here. The attendance form is the exception. */
 
 const BASE_URL = process.env.API_BASE_URL;
 
@@ -39,7 +30,15 @@ export function apiBaseUrlForDisplay(): string {
   return BASE_URL ?? "(unset)";
 }
 
-export type QueryValue = string | number | boolean | undefined | null;
+/** Arrays are sent comma-joined (`daysOfWeek=0,1,2`), which is the form every
+ *  list-shaped query parameter takes on this API. */
+export type QueryValue =
+  | string
+  | number
+  | boolean
+  | undefined
+  | null
+  | readonly (string | number)[];
 
 export type RequestOptions = Omit<RequestInit, "body"> & {
   body?: unknown;
@@ -52,18 +51,20 @@ function buildUrl(path: string, query?: RequestOptions["query"]): string {
   const url = new URL(baseUrl() + path);
   for (const [key, value] of Object.entries(query ?? {})) {
     if (value === undefined || value === null || value === "") continue;
+    if (Array.isArray(value)) {
+      // An empty array is "no filter", not "match nothing" — sending `key=`
+      // would be a 400 rather than the omission the caller meant.
+      if (value.length === 0) continue;
+      url.searchParams.set(key, value.join(","));
+      continue;
+    }
     url.searchParams.set(key, String(value));
   }
   return url.toString();
 }
 
-/**
- * Returns the **full envelope**, so paginated callers can read `meta`.
- *
- * On an expired access token — which arrives as HTTP 500, not 401 — this
- * refreshes once and replays the original request. Any other failure throws an
- * `ApiError`.
- */
+/** Returns the full envelope so paginated callers can read `meta`. An expired
+ *  token — which arrives as HTTP 500, not 401 — triggers one refresh and a replay. */
 export async function apiRequest<T>(
   path: string,
   { body, query, anonymous, headers, ...init }: RequestOptions = {},
@@ -126,12 +127,8 @@ export async function api<T>(
 
 // ── Refresh, single-flight ───────────────────────────────────────────────────
 
-/**
- * Refresh **rotates**: the old row is deleted in the same transaction that
- * creates the new one. Two concurrent refreshes mean one wins and the other
- * 401s, logging the user out. One module-level in-flight promise serializes
- * them, which is enough to cover a burst inside a single render pass.
- */
+/** Refresh rotates the pair, so two concurrent calls log the user out. One
+ *  module-level in-flight promise serializes them. */
 let inFlightRefresh: Promise<{
   accessToken: string;
   refreshToken: string;
@@ -148,9 +145,8 @@ function refreshTokens(): Promise<{
 
       const response = await fetch(`${baseUrl()}/auth/refresh-token`, {
         method: "POST",
-        // ⚠️ The endpoint reads `req.cookies.refreshToken`, not the body, so
-        // the header has to be built by hand. The rotated pair comes back in
-        // the response body, so there is no `Set-Cookie` to parse.
+        // ⚠️ The endpoint reads `req.cookies.refreshToken`, not the body, so the
+        // header is built by hand; the rotated pair comes back in the body.
         headers: { Cookie: `refreshToken=${refreshToken}` },
         cache: "no-store",
       });
@@ -161,10 +157,8 @@ function refreshTokens(): Promise<{
         refreshToken: string;
       }>;
 
-      // Persisting the rotated pair is what fails during a Server Component
-      // render — `cookies().set()` throws there. Returning null makes the
-      // caller redirect to `/login-admin`, which is correct but user-visible;
-      // the proactive refresh in `proxy.ts` is what keeps it rare.
+      // `cookies().set()` throws during a Server Component render. Returning
+      // null redirects to `/login-admin`; `proxy.ts` keeps that rare.
       try {
         await writeSession(json.data);
       } catch {

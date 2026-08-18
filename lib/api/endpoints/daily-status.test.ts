@@ -30,6 +30,8 @@ const {
   dailyStatusExportPath,
 } = await import("@/lib/api/endpoints/daily-status");
 
+const { datePeriod } = await import("@/lib/period");
+
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), {
     status,
@@ -80,7 +82,7 @@ describe("daily-status endpoints", () => {
 
     install(() => json(200, { success: true, statusCode: 200, data: mockCounts }));
 
-    const data = await getDailyStatusCounts("2026-08-18");
+    const data = await getDailyStatusCounts(datePeriod("2026-08-18"));
 
     expect(data).toEqual(mockCounts);
     expect(calls[0].url).toBe("http://backend.test/api/daily-status/counts?date=2026-08-18");
@@ -113,8 +115,7 @@ describe("daily-status endpoints", () => {
       }),
     );
 
-    const res = await getDailyStatusPage({
-      date: "2026-08-18",
+    const res = await getDailyStatusPage(datePeriod("2026-08-18"), {
       page: 1,
       limit: 50,
       status: "MISSING_UPDATE",
@@ -153,15 +154,55 @@ describe("daily-status endpoints", () => {
 
     install(() => json(200, { success: true, statusCode: 200, data: mockDetail }));
 
-    const data = await getDailyStatusMember("m1", "2026-08-18");
+    const data = await getDailyStatusMember("m1", datePeriod("2026-08-18"));
 
     expect(data).toEqual(mockDetail);
     expect(calls[0].url).toBe("http://backend.test/api/daily-status/members/m1?date=2026-08-18");
   });
 
+  test("range mode sends from/to and daysOfWeek instead of date", async () => {
+    install(() =>
+      json(200, {
+        success: true,
+        statusCode: 200,
+        meta: { page: 1, limit: 50, total: 0 },
+        data: [],
+      }),
+    );
+
+    await getDailyStatusPage(
+      {
+        mode: "range",
+        from: "2026-08-15",
+        to: "2026-08-17",
+        daysOfWeek: [0, 1, 2],
+      },
+      { minMissedBothDays: 2, sortBy: "missedBothDays", sortDir: "desc" },
+    );
+
+    const url = calls[0].url;
+    // The two period forms are mutually exclusive on the wire: sending `date`
+    // alongside `from`/`to` is a 400 naming the conflict.
+    expect(url).not.toContain("date=");
+    expect(url).toContain("from=2026-08-15");
+    expect(url).toContain("to=2026-08-17");
+    expect(url).toContain("daysOfWeek=0%2C1%2C2");
+    expect(url).toContain("minMissedBothDays=2");
+    expect(url).toContain("sortBy=missedBothDays");
+  });
+
+  test("guildId narrows a read to one server", async () => {
+    install(() =>
+      json(200, { success: true, statusCode: 200, data: { date: "2026-08-18" } }),
+    );
+
+    await getDailyStatusCounts(datePeriod("2026-08-18"), { guildId: "146" });
+
+    expect(calls[0].url).toContain("guildId=146");
+  });
+
   test("dailyStatusExportPath builds formatted query path", () => {
-    const path = dailyStatusExportPath({
-      date: "2026-08-18",
+    const path = dailyStatusExportPath(datePeriod("2026-08-18"), {
       status: "MISSING_UPDATE",
       search: "rakib",
       format: "csv",
@@ -169,6 +210,17 @@ describe("daily-status endpoints", () => {
 
     expect(path).toBe(
       "/daily-status/export?date=2026-08-18&format=csv&status=MISSING_UPDATE&search=rakib",
+    );
+  });
+
+  test("dailyStatusExportPath carries the range and its server filter", () => {
+    const path = dailyStatusExportPath(
+      { mode: "range", from: "2026-08-15", to: "2026-08-17", daysOfWeek: [] },
+      { guildId: "146", rangeStatus: "NONE", format: "csv" },
+    );
+
+    expect(path).toBe(
+      "/daily-status/export?from=2026-08-15&to=2026-08-17&format=csv&guildId=146&rangeStatus=NONE",
     );
   });
 });

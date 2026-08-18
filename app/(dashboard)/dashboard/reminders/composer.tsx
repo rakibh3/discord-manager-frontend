@@ -10,6 +10,7 @@ import {
   sendBroadcast,
   type TargetPreview,
 } from "@/actions/reminders";
+import { PeriodPicker } from "@/components/dashboard/period-picker";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -30,6 +31,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Field,
   FieldDescription,
@@ -37,10 +39,27 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
-import { dhakaToday, dhakaYesterday, formatCivilDate } from "@/lib/dhaka-date";
+import type { DiscordServer, ReminderCriterion } from "@/lib/api/types";
+import { dhakaYesterday } from "@/lib/dhaka-date";
 import {
+  countedDays,
+  formatPeriod,
+  periodProblem,
+  type Period,
+} from "@/lib/period";
+import {
+  CRITERION_DESCRIPTION,
+  CRITERION_LABEL,
   estimateRemaining,
   REMINDER_MESSAGE_MAX_LENGTH,
 } from "@/lib/reminder-labels";
@@ -49,31 +68,32 @@ type Outcome =
   | { kind: "nobody" | "queue-down" | "error"; message: string }
   | { kind: "conflict"; message: string; existingId: string | null };
 
-/**
- * Compose and send a broadcast.
- *
- * Three guards, in order, because this DMs thousands of people and cannot be
- * undone:
- *
- *   1. A `/targets` preview for the **currently selected date** must exist.
- *      Changing the date discards it, so the count in the confirmation can
- *      never belong to a different day.
- *   2. A confirmation dialog names the date and the exact recipient count.
- *   3. A single-submit guard, because the backend's 409 would otherwise show an
- *      error for an action that actually succeeded.
- */
+const CRITERIA: ReminderCriterion[] = ["MISSING_UPDATE", "MISSING_BOTH"];
+
+/** Compose and send a broadcast, behind three guards: a `/targets` preview of
+ *  the exact selection, a confirmation naming who and how many, and a submit
+ *  lock. The preview and the send derive their target set from one shared query,
+ *  so the two cannot disagree. */
 export function Composer({
   sendingDisabled,
   disabledReason,
   dmPerSecond,
+  servers,
 }: {
   sendingDisabled: boolean;
   disabledReason: string | null;
   dmPerSecond: number;
+  servers: DiscordServer[];
 }) {
   // Yesterday in *Dhaka*, not in the browser's zone — the usual case is
   // reminding people who missed yesterday's update.
-  const [date, setDate] = useState(dhakaYesterday());
+  const [period, setPeriod] = useState<Period>({
+    mode: "date",
+    date: dhakaYesterday(),
+  });
+  const [criterion, setCriterion] = useState<ReminderCriterion>("MISSING_UPDATE");
+  const [minMissedDays, setMinMissedDays] = useState(1);
+  const [guildIds, setGuildIds] = useState<string[]>([]);
   const [message, setMessage] = useState("");
   const [preview, setPreview] = useState<TargetPreview | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
@@ -82,16 +102,19 @@ export function Composer({
   const [sending, startSend] = useTransition();
   const submitted = useRef(false);
 
-  const dateId = useId();
   const messageId = useId();
-  const today = dhakaToday();
+  const criterionId = useId();
+  const thresholdId = useId();
 
-  // A preview belongs to one date. Silently keeping it after the date changes
-  // is exactly how the wrong day's members get DMed. Cleared during render, so
-  // there is no frame in which the send button is live against a stale count.
-  const [previewedDate, setPreviewedDate] = useState(date);
-  if (previewedDate !== date) {
-    setPreviewedDate(date);
+  const selection = { period, criterion, minMissedDays, guildIds };
+  // One key for the whole selection: a preview belongs to the exact query that
+  // produced it, and keeping it after *any* part changes is how the wrong people
+  // get DMed. Cleared during render, so there is no window where a stale count
+  // is shown next to a live Send button.
+  const selectionKey = JSON.stringify(selection);
+  const [seenSelection, setSeenSelection] = useState(selectionKey);
+  if (seenSelection !== selectionKey) {
+    setSeenSelection(selectionKey);
     setPreview(null);
     setOutcome(null);
   }
@@ -99,20 +122,28 @@ export function Composer({
   const trimmed = message.trim();
   const remaining = REMINDER_MESSAGE_MAX_LENGTH - message.length;
   const overLimit = remaining < 0;
+  const counted = countedDays(period);
+  const problem = periodProblem(period);
 
-  const previewedCount =
-    preview?.ok && preview.date === date ? preview.targetCount : null;
+  const thresholdProblem =
+    minMissedDays > counted
+      ? `The period counts ${counted} day${counted === 1 ? "" : "s"}, so a threshold of ${minMissedDays} can never be met.`
+      : null;
+
+  const recipients = preview?.ok ? preview.uniqueRecipients : null;
 
   const canSend =
     !sendingDisabled &&
-    previewedCount !== null &&
-    previewedCount > 0 &&
+    recipients !== null &&
+    recipients > 0 &&
     trimmed.length > 0 &&
-    !overLimit;
+    !overLimit &&
+    !problem &&
+    !thresholdProblem;
 
   const runPreview = () => {
     startPreview(async () => {
-      const result = await previewTargets(date);
+      const result = await previewTargets(selection);
       setPreview(result);
       if (!result.ok) toast.error(result.message);
     });
@@ -123,7 +154,7 @@ export function Composer({
     submitted.current = true;
 
     startSend(async () => {
-      const result = await sendBroadcast({ date, message: trimmed });
+      const result = await sendBroadcast({ ...selection, message: trimmed });
       // A 202 redirects and never returns, so reaching here means it did not
       // queue. Release the guard so the admin can act on the outcome.
       submitted.current = false;
@@ -150,17 +181,43 @@ export function Composer({
   };
 
   const estimate =
-    previewedCount !== null
-      ? estimateRemaining(previewedCount, dmPerSecond)
-      : null;
+    recipients !== null ? estimateRemaining(recipients, dmPerSecond) : null;
+
+  /** An empty selection means "every server", and every box is shown ticked.
+   *  Un-ticking one from that state has to mean "all but this one" — the
+   *  alternative, treating the first click as a fresh selection, would silently
+   *  drop every other server from a broadcast that is about to go out. */
+  const toggleServer = (guildId: string) =>
+    setGuildIds((current) => {
+      if (current.length === 0) {
+        return servers
+          .map((server) => server.guildId)
+          .filter((entry) => entry !== guildId);
+      }
+      const next = current.includes(guildId)
+        ? current.filter((entry) => entry !== guildId)
+        : [...current, guildId];
+      // Back to every server: keep it as the "all" state rather than a list
+      // that happens to name them all, so the send omits `guildIds` entirely.
+      return next.length === servers.length ? [] : next;
+    });
+
+  const scopeLabel =
+    guildIds.length === 0
+      ? "every server"
+      : servers
+          .filter((server) => guildIds.includes(server.guildId))
+          .map((server) => server.label)
+          .join(", ");
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Send a reminder</CardTitle>
         <CardDescription>
-          Direct-messages every member who is in the guild and has no daily
-          update recorded for the chosen date. This cannot be undone.
+          Direct-messages everyone who failed the chosen criterion over the
+          chosen period. One Discord account receives exactly one DM however
+          many servers it is targeted through. This cannot be undone.
         </CardDescription>
       </CardHeader>
 
@@ -177,17 +234,26 @@ export function Composer({
             <Alert variant="success">
               <AlertTitle>There is nobody to remind</AlertTitle>
               <AlertDescription>
-                Every member already has a daily update recorded for{" "}
-                {formatCivilDate(date)}. Nothing was sent, and nothing needed to
-                be. {outcome.message}
+                Nobody matches this selection for {formatPeriod(period)}. Nothing
+                was sent, and nothing needed to be. {outcome.message}
               </AlertDescription>
             </Alert>
           ) : null}
 
           {outcome?.kind === "conflict" ? (
             <Alert variant="warning">
-              <AlertTitle>A broadcast for this date is already running</AlertTitle>
+              <AlertTitle>
+                Another broadcast already covers one of these days
+              </AlertTitle>
               <AlertDescription className="flex flex-col items-start gap-2">
+                <span>
+                  {/* An overlap check, not date equality — worth saying, because
+                      "but I picked a different date" is the obvious reaction. */}
+                  Only one broadcast may be in flight for any given day: it
+                  guards the bot&rsquo;s single DM budget, so an unfinished run
+                  sharing <strong>any</strong> day with this period blocks it,
+                  whatever criterion or servers either one used.
+                </span>
                 <span>{outcome.message}</span>
                 {outcome.existingId ? (
                   <Button variant="outline" size="sm" asChild>
@@ -206,7 +272,7 @@ export function Composer({
               <AlertDescription>
                 Redis could not be reached, so the jobs were refused. The
                 broadcast was <strong>auto-cancelled</strong>, which means this
-                date is not left blocked — you can send again once the queue is
+                period is not left blocked — you can send again once the queue is
                 back. The API, the bot, message ingestion and the channel
                 scheduler are all unaffected. {outcome.message}
               </AlertDescription>
@@ -220,37 +286,106 @@ export function Composer({
           ) : null}
 
           <Field>
-            <FieldLabel htmlFor={dateId}>Date to remind about</FieldLabel>
-            <div className="flex flex-wrap items-center gap-2">
-              <Input
-                id={dateId}
-                type="date"
-                value={date}
-                // A native date input yields a civil `YYYY-MM-DD` string with no
-                // Date object in between, which is exactly the wire format and
-                // sidesteps every timezone conversion.
-                max={today}
-                onChange={(event) => setDate(event.target.value)}
-                className="w-auto"
-              />
-              <Button
-                type="button"
-                variant="outline"
-                onClick={runPreview}
-                disabled={previewing || !date || date > today}
+            <FieldLabel>Period to remind about</FieldLabel>
+            <PeriodPicker value={period} onChange={setPeriod} />
+          </Field>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field>
+              <FieldLabel htmlFor={criterionId}>Who counts as behind</FieldLabel>
+              <Select
+                value={criterion}
+                onValueChange={(value) =>
+                  setCriterion(value as ReminderCriterion)
+                }
               >
-                {previewing ? (
-                  <Spinner data-icon="inline-start" />
-                ) : (
-                  <Eye data-icon="inline-start" />
-                )}
-                Preview recipients
-              </Button>
-            </div>
-            <FieldDescription>
-              Asia/Dhaka calendar day. Future dates are rejected. Defaults to
-              yesterday, which is the usual case.
-            </FieldDescription>
+                <SelectTrigger id={criterionId}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {CRITERIA.map((value) => (
+                      <SelectItem key={value} value={value}>
+                        {CRITERION_LABEL[value]}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+              <FieldDescription>
+                {CRITERION_DESCRIPTION[criterion]}
+              </FieldDescription>
+            </Field>
+
+            <Field data-invalid={thresholdProblem ? true : undefined}>
+              <FieldLabel htmlFor={thresholdId}>
+                Days behind, at least
+              </FieldLabel>
+              <Input
+                id={thresholdId}
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={counted}
+                value={minMissedDays}
+                aria-invalid={thresholdProblem ? true : undefined}
+                aria-describedby={`${thresholdId}-hint`}
+                onChange={(event) => {
+                  const value = Number.parseInt(event.target.value, 10);
+                  setMinMissedDays(Number.isInteger(value) && value >= 1 ? value : 1);
+                }}
+                className="w-28"
+              />
+              <FieldDescription id={`${thresholdId}-hint`}>
+                {thresholdProblem ??
+                  `Out of ${counted} counted day${counted === 1 ? "" : "s"}. A threshold higher than that is refused rather than run as a broadcast that finds nobody.`}
+              </FieldDescription>
+            </Field>
+          </div>
+
+          {/* Only where there is a choice to make. One server is the normal
+              case, and a scope control with a single checkbox is noise. */}
+          {servers.length > 1 ? (
+            <fieldset className="flex flex-col gap-2">
+              <legend className="text-sm font-medium">Servers to target</legend>
+              <div className="flex flex-wrap gap-x-4 gap-y-2">
+                {servers.map((server) => (
+                  <label
+                    key={server.guildId}
+                    className="flex items-center gap-2 text-sm"
+                  >
+                    <Checkbox
+                      checked={
+                        guildIds.length === 0 || guildIds.includes(server.guildId)
+                      }
+                      onCheckedChange={() => toggleServer(server.guildId)}
+                    />
+                    {server.label}
+                  </label>
+                ))}
+              </div>
+              <p className="text-muted-foreground text-sm">
+                {guildIds.length === 0
+                  ? "Every configured server. Someone in two of them is still DMed once."
+                  : `Narrowed to ${scopeLabel}.`}
+              </p>
+            </fieldset>
+          ) : null}
+
+          <Field orientation="horizontal">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={runPreview}
+              disabled={previewing || !!problem || !!thresholdProblem}
+            >
+              {previewing ? (
+                <Spinner data-icon="inline-start" />
+              ) : (
+                <Eye data-icon="inline-start" />
+              )}
+              Preview recipients
+            </Button>
           </Field>
 
           {preview && !preview.ok ? (
@@ -259,15 +394,15 @@ export function Composer({
             </Alert>
           ) : null}
 
-          {preview?.ok && preview.date === date ? (
-            <Alert variant={preview.targetCount === 0 ? "success" : "default"}>
+          {preview?.ok ? (
+            <Alert variant={preview.uniqueRecipients === 0 ? "success" : "default"}>
               <AlertTitle>
-                {preview.targetCount === 0
-                  ? "Nobody is missing an update for this date"
-                  : `${preview.targetCount.toLocaleString()} member${preview.targetCount === 1 ? "" : "s"} would be messaged`}
+                {preview.uniqueRecipients === 0
+                  ? "Nobody is behind for this selection"
+                  : `${preview.uniqueRecipients.toLocaleString()} ${preview.uniqueRecipients === 1 ? "person" : "people"} would be messaged`}
               </AlertTitle>
               <AlertDescription className="flex flex-col gap-2">
-                {preview.targetCount > 0 ? (
+                {preview.uniqueRecipients > 0 ? (
                   <>
                     <span>
                       This is the same query the send itself runs, so the two
@@ -276,6 +411,18 @@ export function Composer({
                         ? ` At ${dmPerSecond} DM${dmPerSecond === 1 ? "" : "s"} per second, delivery would take ${estimate}.`
                         : null}
                     </span>
+                    {preview.targetCount !== preview.uniqueRecipients ? (
+                      // The gap is the per-server audit trail, not duplicate
+                      // sends — said plainly, because two different counts on
+                      // one screen otherwise read as a bug.
+                      <span className="text-muted-foreground">
+                        {preview.targetCount.toLocaleString()} recipient rows
+                        across the targeted servers, but{" "}
+                        {preview.uniqueRecipients.toLocaleString()} actual
+                        people. Someone in two servers is recorded twice and
+                        still receives exactly one DM.
+                      </span>
+                    ) : null}
                     <details className="text-sm">
                       <summary className="cursor-pointer">
                         Show the first {preview.sample.length} of{" "}
@@ -285,11 +432,15 @@ export function Composer({
                           every target unpaginated, and thousands of rows would
                           freeze the tab. */}
                       <ul className="mt-2 flex max-h-48 flex-col gap-0.5 overflow-y-auto font-mono text-xs">
-                        {preview.sample.map((target) => (
-                          <li key={target.memberId} className="truncate">
+                        {preview.sample.map((target, index) => (
+                          <li
+                            key={`${target.memberId}-${index}`}
+                            className="truncate"
+                          >
                             {target.discordUsername}
-                            {target.displayName
-                              ? ` — ${target.displayName}`
+                            {target.displayName ? ` — ${target.displayName}` : null}
+                            {target.missedDays !== undefined
+                              ? ` · ${target.missedDays} day${target.missedDays === 1 ? "" : "s"} behind`
                               : null}
                           </li>
                         ))}
@@ -298,8 +449,8 @@ export function Composer({
                   </>
                 ) : (
                   <span>
-                    Every member in the guild already has an update recorded for{" "}
-                    {formatCivilDate(preview.date)}. There is nothing to send.
+                    Nobody matches this criterion and threshold over{" "}
+                    {formatPeriod(period)}. There is nothing to send.
                   </span>
                 )}
               </AlertDescription>
@@ -340,18 +491,24 @@ export function Composer({
               <AlertDialogContent>
                 <AlertDialogHeader>
                   <AlertDialogTitle>
-                    Send to {previewedCount?.toLocaleString()} member
-                    {previewedCount === 1 ? "" : "s"}?
+                    Send to {recipients?.toLocaleString()}{" "}
+                    {recipients === 1 ? "person" : "people"}?
                   </AlertDialogTitle>
                   <AlertDialogDescription>
                     This direct-messages{" "}
                     <strong>
-                      {previewedCount?.toLocaleString()} member
-                      {previewedCount === 1 ? "" : "s"}
+                      {recipients?.toLocaleString()}{" "}
+                      {recipients === 1 ? "person" : "people"}
                     </strong>{" "}
-                    who have no daily update recorded for{" "}
-                    <strong>{formatCivilDate(date)}</strong>. It cannot be
-                    undone or recalled once a message is delivered.
+                    who, over <strong>{formatPeriod(period)}</strong>, matched
+                    &ldquo;{CRITERION_LABEL[criterion].toLowerCase()}&rdquo; on
+                    at least{" "}
+                    <strong>
+                      {minMissedDays} of {counted} counted day
+                      {counted === 1 ? "" : "s"}
+                    </strong>
+                    , across {scopeLabel}. It cannot be undone or recalled once a
+                    message is delivered.
                     <br />
                     <br />
                     Delivery is <strong>paced, not immediate</strong>: at{" "}
@@ -379,13 +536,15 @@ export function Composer({
 
             {!canSend && !sendingDisabled ? (
               <p className="text-muted-foreground text-sm">
-                {previewedCount === null
-                  ? "Preview the recipients for this date first."
-                  : previewedCount === 0
-                    ? "There is nobody to remind for this date."
-                    : trimmed.length === 0
-                      ? "Write a message first."
-                      : "The message is over the character limit."}
+                {problem ??
+                  thresholdProblem ??
+                  (recipients === null
+                    ? "Preview the recipients for this selection first."
+                    : recipients === 0
+                      ? "There is nobody to remind for this selection."
+                      : trimmed.length === 0
+                        ? "Write a message first."
+                        : "The message is over the character limit.")}
               </p>
             ) : null}
           </Field>

@@ -1,14 +1,7 @@
 import { z } from "zod";
 
-/**
- * Mirrors the backend's Zod rules for `PUT /users/my-profile` exactly
- * (`API_INTEGRATION.md` §8.2). Every field is optional.
- *
- * Blank strings are normalized to `undefined` rather than validated, because
- * the action **omits** empty fields from the request entirely — sending
- * `profilePhoto: ""` would fail the URL rule for a field the admin simply left
- * alone. Deliberately clearing a field is not something this endpoint supports.
- */
+/** Mirrors the backend's Zod rules for `PUT /users/my-profile`; every field is
+ *  optional. Blanks become `undefined` because the action omits them entirely. */
 const blankToUndefined = (value: unknown) =>
   typeof value === "string" && value.trim() === "" ? undefined : value;
 

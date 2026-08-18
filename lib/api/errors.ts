@@ -1,32 +1,10 @@
-/**
- * One `ApiError` for the backend's five different error shapes.
- *
- * `globalErrorHandler.ts` is a single formatter but its branches emit different
- * bodies (`API_INTEGRATION.md` §3):
- *
- *   3a Zod validation  → 400, `errorDetails.issues[]`, every word Title Cased
- *   3b AppError        → its own status, human-written `message`
- *   3c Prisma P2002    → 409, useful text in **`errorMessage`**, not `message`
- *   3d Prisma P2025    → 404, same — and this is what an unknown login email is
- *   3e Auth middleware → 401/403 written directly, bypassing the handler
- *   3f Unknown route   → 404 `API Not Found!`
- *   3g Expired JWT     → **HTTP 500**, `message: "jwt expired"`
- *
- * No error body contains `statusCode` and none contains `data`, so the HTTP
- * status is the only reliable source for the code.
- *
- * Not `server-only`: the attendance form calls the backend browser-direct and
- * needs the same normalization. Nothing here touches a token.
- */
+/** One `ApiError` for the backend's five error shapes (`API_INTEGRATION.md` §3).
+ *  HTTP status is the only reliable code source. Not `server-only` by design. */
 
 export type FieldIssue = { path: string; message: string };
 
-/**
- * An expired or malformed access token comes back as **HTTP 500** because
- * `auth.ts` hands the token to `jwt.verify` directly and a `TokenExpiredError`
- * carries no `statusCode`. Keying refresh on 401 alone means a 500 error page
- * every single time a token ages out.
- */
+/** An expired or malformed access token comes back as **HTTP 500**, not 401 —
+ *  `auth.ts` hands it to `jwt.verify` and `TokenExpiredError` carries no status. */
 const EXPIRED_JWT_MESSAGES = new Set([
   "jwt expired",
   "invalid signature",
@@ -34,10 +12,8 @@ const EXPIRED_JWT_MESSAGES = new Set([
   "invalid token",
 ]);
 
-/**
- * Zod paths arrive Title Cased (`DiscordUsername`), so only the first character
- * needs lowering to match a form field name.
- */
+/** Zod paths arrive Title Cased (`DiscordUsername`), so only the first character
+ *  needs lowering to match a form field name. */
 const lowerFirst = (value: string): string =>
   value.charAt(0).toLowerCase() + value.slice(1);
 
@@ -64,10 +40,7 @@ export class ApiError extends Error {
     return this.status === 400 && this.issues.length > 0;
   }
 
-  /**
-   * The access token needs refreshing. Note the 500 branch — see the constant
-   * above for why that is not a bug in this check.
-   */
+  /** The access token needs refreshing — see `EXPIRED_JWT_MESSAGES` for the 500. */
   get isAuthExpired(): boolean {
     return (
       this.status === 401 ||
@@ -80,14 +53,8 @@ export class ApiError extends Error {
     return this.status === 0;
   }
 
-  /**
-   * Field-keyed map for `useActionState` / react-hook-form.
-   *
-   * The values are the *server's* text, which is Title Cased word by word and
-   * reads wrong in polished UI — callers should map these keys to their own
-   * copy and fall back to the server string only for fields they don't know
-   * about, so an unmapped issue is never silently swallowed.
-   */
+  /** Field-keyed map for `useActionState` / react-hook-form. The values are the
+   *  server's Title Cased text; callers should map these keys to their own copy. */
   fieldErrors(): Record<string, string> {
     return Object.fromEntries(
       this.issues.map((issue) => [lowerFirst(issue.path), issue.message]),
@@ -140,9 +107,8 @@ export async function toApiError(response: Response): Promise<ApiError> {
   const message = asString(body?.message);
   const errorMessage = asString(body?.errorMessage);
 
-  // Order matters. On the Zod branch `message` is the joined string and the
-  // per-field text lives in `issues`. On the Prisma branches `message` is a
-  // generic label ("Duplicate Error") and the real text is in `errorMessage`.
+  // Order matters: on the Zod branch the per-field text is in `issues`, while on
+  // the Prisma branches `message` is a label and the text is `errorMessage`.
   const resolved =
     (issues.length > 0
       ? issues.map((issue) => issue.message).join(", ")
@@ -155,11 +121,8 @@ export async function toApiError(response: Response): Promise<ApiError> {
   return new ApiError(response.status, resolved, issues, body);
 }
 
-/**
- * A request that never got a response. Status 0 keeps it out of every
- * status-based branch — in particular it must never look like `isAuthExpired`,
- * which would log a user out because their wifi dropped.
- */
+/** A request that never got a response. Status 0 keeps it out of every
+ *  status-based branch, especially `isAuthExpired`. */
 export function toNetworkError(cause: unknown): ApiError {
   const detail = cause instanceof Error ? cause.message : String(cause);
   return new ApiError(

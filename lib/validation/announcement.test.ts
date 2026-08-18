@@ -11,12 +11,8 @@ import {
   type AnnouncementFormValues,
 } from "@/lib/validation/announcement";
 
-/**
- * These mirror backend rules that are cheap to check in the browser and
- * expensive to discover after a round trip — plus one rule that is deliberately
- * *not* mirrored (the 2,000-character limit), because only the server can
- * measure the rendered message.
- */
+/** Mirrors of the backend rules that are cheap to check in the browser — plus
+ *  the 2,000-character limit, which is deliberately not mirrored. */
 
 const payload: AnnouncementPayload = {
   template: {
@@ -52,10 +48,25 @@ const payload: AnnouncementPayload = {
     processEnabled: true,
     running: true,
     nextRunAt: "2026-08-18T13:00:00.000Z",
-    lastOutcome: null,
+    // Keyed per guild: one server's success must not overwrite another's
+    // missing-permission failure.
+    lastOutcomeByGuild: {},
   },
-  channel: { id: "1467526520347037729" },
-  today: { date: "2026-08-18", posted: false, attempts: [] },
+  // Channels and attempts are per server — there is no combined form.
+  today: {
+    date: "2026-08-18",
+    posted: false,
+    servers: [
+      {
+        guildId: "1467526520347037729",
+        label: "Batch A",
+        channelId: "1467526520347037729",
+        posted: false,
+        attempts: [],
+        lastOutcome: null,
+      },
+    ],
+  },
 };
 
 const base = (): AnnouncementFormValues => formValuesFrom(payload);
@@ -65,11 +76,8 @@ const withChanges = (
 ): AnnouncementFormValues => ({ ...base(), ...changes });
 
 describe("formValuesFrom", () => {
-  /**
-   * The single most damaging mistake this screen can make: binding the editor
-   * to `preview.content` would save today's date as literal text into the
-   * stored template, and every future post would name the wrong day.
-   */
+  /** Binding the editor to `preview.content` would save today's date as literal
+   *  text into the stored template, so every future post names the wrong day. */
   test("binds to the raw template body, never to the rendered preview", () => {
     const values = formValuesFrom(payload);
 
@@ -256,12 +264,8 @@ describe("validateAnnouncement", () => {
     if (!result.ok) expect(result.message).toContain("Nothing has changed");
   });
 
-  /**
-   * The limit applies to the *rendered* message plus the mention line, which
-   * the browser cannot compute. Checking `body.length` here would disagree with
-   * the backend in both directions — passing bodies it rejects, and blocking
-   * bodies it would accept.
-   */
+  /** The limit applies to the rendered message plus the mention line, which the
+   *  browser cannot compute — a `body.length` check would disagree both ways. */
   test("does not enforce the 2,000-character limit on the raw body", () => {
     const result = validateAnnouncement(
       payload,

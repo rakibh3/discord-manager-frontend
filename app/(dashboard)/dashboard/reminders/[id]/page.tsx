@@ -32,9 +32,8 @@ async function Progress({ id }: { id: string }) {
     throw error;
   }
 
-  // The time-remaining estimate needs the configured pacing. If queue health is
-  // unavailable, fall back to the documented default rather than dropping the
-  // estimate — a 40-minute bar with no estimate reads as a hung job.
+  // The estimate needs the configured pacing; fall back to the documented
+  // default rather than dropping it, since a bar with no estimate reads as hung.
   const queue = await getQueueStatus().catch(() => null);
 
   return (
