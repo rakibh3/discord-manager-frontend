@@ -15,7 +15,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import type { ChannelSchedulePayload } from "@/lib/api/types";
-import { formatDhaka } from "@/lib/dhaka-date";
+import { formatDhaka, formatWallClock } from "@/lib/dhaka-date";
 import { explainScheduleError, formatWeekdays } from "@/lib/validation/schedule";
 
 /**
@@ -187,7 +187,8 @@ export function ScheduleView({ initial }: { initial: ChannelSchedulePayload }) {
           <CardTitle>Stored schedule</CardTitle>
           <CardDescription>
             Currently {schedule.enabled ? "enabled" : "disabled"}, opening at{" "}
-            {schedule.openTime} and locking at {schedule.closeTime} on{" "}
+            {formatWallClock(schedule.openTime)} and locking at{" "}
+            {formatWallClock(schedule.closeTime)} on{" "}
             {formatWeekdays(schedule.daysOfWeek)} ({schedule.timezone}). Last
             changed {formatDhaka(schedule.updatedAt)}
             {schedule.updatedBy

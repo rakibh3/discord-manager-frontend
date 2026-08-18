@@ -22,7 +22,9 @@ Everything below was read out of the source (`src/modules/**`, `src/middlewares/
    - [8.4 Schedule — `/api/schedule`](#84-schedule--apischedule)
    - [8.5 Reminders — `/api/reminders`](#85-reminders--apireminders)
    - [8.6 Attendance (public) — `/api/attendance`](#86-attendance-public--apiattendance)
-   - [8.7 Root](#87-root)
+   - [8.7 Attendance announcement — `/api/announcement`](#87-attendance-announcement--apiannouncement)
+   - [8.8 Daily status — `/api/daily-status`](#88-daily-status--apidaily-status)
+   - [8.9 Root](#89-root)
 9. [Rate limits](#9-rate-limits)
 10. [Caching and revalidation strategy per endpoint](#10-caching-and-revalidation-strategy-per-endpoint)
 11. [Live progress without SSE](#11-live-progress-without-sse)
@@ -36,9 +38,9 @@ Everything below was read out of the source (`src/modules/**`, `src/middlewares/
 
 There are **two** browser front-ends and they are separate deployments. The backend's CORS allowlist is built from exactly these two env vars (`src/config/index.ts`), and it runs with `credentials: true`, so `'*'` is never an option.
 
-| App | Dev origin | Backend env var | Talks to |
-| --- | --- | --- | --- |
-| Admin dashboard | `http://localhost:3000` | `APP_URL` | every `/api/*` route |
+| App                    | Dev origin              | Backend env var       | Talks to                 |
+| ---------------------- | ----------------------- | --------------------- | ------------------------ |
+| Admin dashboard        | `http://localhost:3000` | `APP_URL`             | every `/api/*` route     |
 | Public attendance form | `http://localhost:3000` | `ATTENDANCE_FORM_URL` | `/api/attendance/*` only |
 
 Backend dev URL: `http://localhost:8000` (`PORT` in `.env`). API prefix: `/api`.
@@ -66,14 +68,15 @@ Every successful response goes through `sendResponse` (`src/utils/sendResponse.t
 ```jsonc
 {
   "success": true,
-  "statusCode": 200,     // duplicated in the body, not just the HTTP status
-  "message": "…",        // human-readable, safe to surface in a toast
-  "meta": {              // present ONLY on paginated list endpoints
+  "statusCode": 200, // duplicated in the body, not just the HTTP status
+  "message": "…", // human-readable, safe to surface in a toast
+  "meta": {
+    // present ONLY on paginated list endpoints
     "page": 1,
     "limit": 50,
-    "total": 137
+    "total": 137,
   },
-  "data": { }            // the payload — always nested here
+  "data": {}, // the payload — always nested here
 }
 ```
 
@@ -95,10 +98,13 @@ Every successful response goes through `sendResponse` (`src/utils/sendResponse.t
   "message": "Discordusername Enter A Valid Discord Username: 2-32 Characters …",
   "errorDetails": {
     "issues": [
-      { "path": "DiscordUsername", "message": "Enter A Valid Discord Username: …" }
-    ]
+      {
+        "path": "DiscordUsername",
+        "message": "Enter A Valid Discord Username: …",
+      },
+    ],
   },
-  "stack": "…"          // development only
+  "stack": "…", // development only
 }
 ```
 
@@ -113,7 +119,7 @@ Field paths are the **last** path segment, title-cased: `openTime` → `OpenTime
   "success": false,
   "message": "A reminder broadcast for 2026-08-16 is already processing (id …). Wait for it to finish, or cancel it first.",
   "errorDetails": { "statusCode": 409 },
-  "stack": "…"
+  "stack": "…",
 }
 ```
 
@@ -150,7 +156,12 @@ Note the message lives in **`errorMessage`**, not `message`, and `errorMessage` 
 ### 3f. Unknown route → 404
 
 ```jsonc
-{ "success": false, "message": "API Not Found!", "path": "/api/nope", "date": "2026-08-17T…" }
+{
+  "success": false,
+  "message": "API Not Found!",
+  "path": "/api/nope",
+  "date": "2026-08-17T…",
+}
 ```
 
 ### 3g. ⚠️ Expired / invalid JWT → **HTTP 500**, not 401
@@ -158,15 +169,24 @@ Note the message lives in **`errorMessage`**, not `message`, and `errorMessage` 
 This is the single most important quirk for the frontend. `auth.ts` calls `jwt.verify(...)` directly; a `TokenExpiredError` has no `statusCode`, so it falls through to the generic branch of the error handler:
 
 ```jsonc
-{ "success": false, "message": "jwt expired", "errorDetails": { "name": "TokenExpiredError", "expiredAt": "…" } }
+{
+  "success": false,
+  "message": "jwt expired",
+  "errorDetails": { "name": "TokenExpiredError", "expiredAt": "…" },
+}
 ```
 
 HTTP status is **500**. Same for `"invalid signature"`, `"jwt malformed"`, `"invalid token"`.
 
-Your API client must therefore treat *both* of these as "needs refresh":
+Your API client must therefore treat _both_ of these as "needs refresh":
 
 ```ts
-const NEEDS_REFRESH = new Set(['jwt expired', 'invalid signature', 'jwt malformed', 'invalid token']);
+const NEEDS_REFRESH = new Set([
+  'jwt expired',
+  'invalid signature',
+  'jwt malformed',
+  'invalid token',
+]);
 const isAuthExpired = (status: number, message?: string) =>
   status === 401 || (status === 500 && !!message && NEEDS_REFRESH.has(message));
 ```
@@ -182,8 +202,12 @@ Only `ADMIN` accounts exist. Students never log in (they are `discord_members` r
 ### 4a. The `Authorization` header carries a **bare token — no `Bearer ` prefix**
 
 ```ts
-headers: { Authorization: accessToken }   // ✅
-headers: { Authorization: `Bearer ${accessToken}` }  // ❌ jwt malformed → HTTP 500
+headers: {
+  Authorization: accessToken;
+} // ✅
+headers: {
+  Authorization: `Bearer ${accessToken}`;
+} // ❌ jwt malformed → HTTP 500
 ```
 
 `auth.ts` reads `req.headers.authorization` and hands it straight to `jwt.verify`.
@@ -199,7 +223,9 @@ Fortunately login and refresh also return both tokens in the response body. **Re
 `POST /api/auth/refresh-token` does `const { refreshToken } = req.cookies`. Calling it from the Next server means sending the header by hand:
 
 ```ts
-headers: { Cookie: `refreshToken=${refreshToken}` }
+headers: {
+  Cookie: `refreshToken=${refreshToken}`;
+}
 ```
 
 The rotated pair comes back in the response body, so you never need to parse `Set-Cookie`.
@@ -210,10 +236,10 @@ Each refresh deletes the old row and creates a new one in a transaction. Two con
 
 ### 4e. Token lifetimes
 
-| Token | JWT `exp` | Backend DB row | Cookie `maxAge` (unused by you) |
-| --- | --- | --- | --- |
-| access | `JWT_ACCESS_EXPIRES_IN` (`7d` in dev `.env`) | — | 1 hour |
-| refresh | `JWT_REFRESH_EXPIRES_IN` (`30d` in dev) | **hardcoded 7 days** in `auth.service.ts` | 7 days |
+| Token   | JWT `exp`                                    | Backend DB row                            | Cookie `maxAge` (unused by you) |
+| ------- | -------------------------------------------- | ----------------------------------------- | ------------------------------- |
+| access  | `JWT_ACCESS_EXPIRES_IN` (`7d` in dev `.env`) | —                                         | 1 hour                          |
+| refresh | `JWT_REFRESH_EXPIRES_IN` (`30d` in dev)      | **hardcoded 7 days** in `auth.service.ts` | 7 days                          |
 
 The refresh token's **DB row expiry (7 days) is what actually governs** — a 30-day JWT whose row has expired is rejected with 401 `"Invalid or expired refresh token"`. Set your Next session cookie to 7 days, not 30.
 
@@ -230,7 +256,10 @@ The refresh token's **DB row expiry (7 days) is what actually governs** — a 30
 const DHAKA = 'Asia/Dhaka';
 
 const dateFormatter = new Intl.DateTimeFormat('en-CA', {
-  timeZone: DHAKA, year: 'numeric', month: '2-digit', day: '2-digit',
+  timeZone: DHAKA,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
 });
 
 /** Today's Dhaka civil date as YYYY-MM-DD, independent of the viewer's clock. */
@@ -239,7 +268,10 @@ export function dhakaToday(instant: Date = new Date()): string {
 }
 
 /** The Dhaka day N days before `from`. `dhakaYesterday()` is the reminder default. */
-export function dhakaDaysAgo(days: number, from: string = dhakaToday()): string {
+export function dhakaDaysAgo(
+  days: number,
+  from: string = dhakaToday(),
+): string {
   const [y, m, d] = from.split('-').map(Number);
   const shifted = new Date(Date.UTC(y, m - 1, d - days));
   return shifted.toISOString().slice(0, 10); // safe: constructed in UTC from a civil date
@@ -290,7 +322,7 @@ frontend/
 
 Two rules from the Next docs that shape this:
 
-- **Proxy is not authorization.** `proxy.ts` does an *optimistic* check (is a session cookie present?) to avoid a flash of the dashboard. The authoritative check is `requireSession()` in the layout and in every data-access function — the Data Access Layer pattern.
+- **Proxy is not authorization.** `proxy.ts` does an _optimistic_ check (is a session cookie present?) to avoid a flash of the dashboard. The authoritative check is `requireSession()` in the layout and in every data-access function — the Data Access Layer pattern.
 - **`fetch` is uncached by default in Next 16.** That is what you want for dashboard data. Reach for `use cache` + `cacheLife`/`cacheTag` only where staleness is acceptable (see §10), and wrap slow reads in `<Suspense>` so `loading.tsx` isn't blocked.
 
 ---
@@ -381,8 +413,8 @@ export type ScheduleLastRun = {
 
 export type ChannelSchedulePayload = {
   schedule: {
-    openTime: string;   // "HH:mm"
-    closeTime: string;  // "HH:mm"
+    openTime: string; // "HH:mm"
+    closeTime: string; // "HH:mm"
     daysOfWeek: number[]; // 0 = Sunday … 6 = Saturday
     enabled: boolean;
     timezone: 'Asia/Dhaka'; // reported, never sent
@@ -405,12 +437,123 @@ export type ChannelToggleResult = {
   announced: boolean;
 };
 
+// ── Attendance announcement ─────────────────────────────────────────────
+export type AnnouncementPlaceholder =
+  | '{{date}}'
+  | '{{close_time}}'
+  | '{{daily_update_channel_id}}'
+  | '{{attendance_form_link}}'
+  | '{{termination_day}}';
+
+export type ResolvedMentions = {
+  roleIds: string[];
+  userIds: string[];
+  /** Entries that no longer resolve, as `role:<id>` / `user:<handle>`. */
+  unresolved: string[];
+};
+
+export type AnnouncementAttemptStatus = 'SENDING' | 'POSTED' | 'FAILED';
+
+export type AnnouncementAttempt = {
+  attempt: number;
+  status: AnnouncementAttemptStatus;
+  trigger: 'SCHEDULED' | 'MANUAL';
+  discordMessageId: string | null;
+  unresolvedTargets: string[];
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AnnouncementDispatchResult =
+  | {
+      status: 'posted';
+      announcementDate: string;
+      attempt: number;
+      messageId: string;
+      unresolvedTargets: string[];
+    }
+  | {
+      status: 'already-sent';
+      announcementDate: string;
+      attempt: number;
+      postedAt: string;
+    }
+  | { status: 'disabled' }
+  | {
+      status: 'failed';
+      announcementDate: string;
+      error: string;
+      missingPermission: boolean;
+      notConnected: boolean;
+    };
+
+export type AnnouncementPayload = {
+  template: {
+    body: string; // placeholders NOT expanded
+    terminationDays: number;
+    mentionEveryone: boolean;
+    mentionRoleIds: string[];
+    mentionUsernames: string[];
+    updatedAt: string;
+    updatedBy: { id: string; name: string; email: string } | null;
+  };
+  schedule: {
+    announceTime: string; // "HH:mm"
+    daysOfWeek: number[]; // 0 = Sunday … 6 = Saturday
+    enabled: boolean;
+    timezone: 'Asia/Dhaka'; // reported, never sent
+  };
+  preview: {
+    content: string; // exactly what would be posted right now
+    length: number;
+    limit: 2000;
+    closeTime: string; // read from the #daily-update schedule
+    mentions: ResolvedMentions;
+  };
+  supportedPlaceholders: AnnouncementPlaceholder[];
+  scheduler: {
+    processEnabled: boolean;
+    running: boolean;
+    nextRunAt: string | null;
+    lastOutcome: {
+      ranAt: string;
+      trigger: 'SCHEDULED' | 'MANUAL';
+      result: AnnouncementDispatchResult;
+    } | null;
+  };
+  channel: { id: string | null };
+  today: {
+    date: string; // YYYY-MM-DD, Dhaka
+    posted: boolean;
+    attempts: AnnouncementAttempt[];
+  };
+};
+
+export type AnnouncementPreview = {
+  content: string;
+  length: number;
+  limit: 2000;
+  withinLimit: boolean;
+  closeTime: string;
+  mentions: ResolvedMentions;
+  supportedPlaceholders: AnnouncementPlaceholder[];
+};
+
+export type AnnouncementSendResult = {
+  announcementDate: string;
+  attempt: number;
+  discordMessageId: string;
+  unresolvedTargets: string[];
+  channelId: string | null;
+};
+
 // ── Reminders ───────────────────────────────────────────────────────────
 export type ReminderStatus =
-  | 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'CANCELLED' | 'FAILED';
+  'PENDING' | 'PROCESSING' | 'COMPLETED' | 'CANCELLED' | 'FAILED';
 
 export type ReminderDeliveryStatus =
-  | 'PENDING' | 'DELIVERED' | 'DM_CLOSED' | 'FAILED';
+  'PENDING' | 'DELIVERED' | 'DM_CLOSED' | 'FAILED';
 
 export type ReminderTarget = {
   memberId: string;
@@ -442,7 +585,7 @@ export type ReminderProgress = {
   delivered: number;
   dmClosed: number;
   failed: number;
-  outstanding: number;   // still PENDING
+  outstanding: number; // still PENDING
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
@@ -482,7 +625,12 @@ export type ReminderQueueStatus = {
   redisConnected: boolean;
   redisError: string | null;
   dmPerSecond: number;
-  queueDepth: { waiting: number; active: number; delayed: number; failed: number } | null;
+  queueDepth: {
+    waiting: number;
+    active: number;
+    delayed: number;
+    failed: number;
+  } | null;
   lastFallback: {
     reminderId: string;
     ranAt: string;
@@ -514,6 +662,58 @@ export type SubmitAttendancePayload = {
   submittedAt: string;
   member: VerifiedMember;
 };
+
+export type AttendanceWindowPayload = {
+  isOpen: boolean;
+  date: string;
+  openTime: string;
+  closeTime: string;
+  daysOfWeek: number[];
+  enabled: boolean;
+  timezone: string;
+  nextOpenAt: string | null;
+  closesAt: string | null;
+};
+
+// ── Daily Status ──────────────────────────────────────────────────────────
+export type DailyStatus =
+  | 'COMPLETE'
+  | 'MISSING_UPDATE'
+  | 'MISSING_ATTENDANCE'
+  | 'MISSING_BOTH';
+
+export type DailyStatusCounts = {
+  date: string;
+  totalMembers: number;
+  attendanceSubmitted: number;
+  dailyUpdateSubmitted: number;
+  bothComplete: number;
+  missingUpdateOnly: number;
+  missingAttendanceOnly: number;
+  missingBoth: number;
+};
+
+export type DailyStatusRow = {
+  memberId: string;
+  discordUserId: string;
+  discordUsername: string;
+  displayName: string | null;
+  name: string | null;
+  email: string | null;
+  phone: string | null;
+  hasAttendance: boolean;
+  hasDailyUpdate: boolean;
+  status: DailyStatus;
+  attendanceSubmittedAt: string | null;
+};
+
+export type MemberDailyStatus = DailyStatusRow & {
+  messages: Array<{
+    id: string;
+    content: string;
+    postedAt: string;
+  }>;
+};
 ```
 
 ### 7.2 Error normalization — `lib/api/errors.ts`
@@ -533,11 +733,16 @@ export class ApiError extends Error {
   }
 
   /** Zod rejected the payload — render `issues` against your own field labels. */
-  get isValidation() { return this.status === 400 && this.issues.length > 0; }
+  get isValidation() {
+    return this.status === 400 && this.issues.length > 0;
+  }
 
   /** Access token is expired or malformed. Note the backend answers 500 for this. */
   get isAuthExpired() {
-    return this.status === 401 || (this.status === 500 && EXPIRED_JWT.has(this.message));
+    return (
+      this.status === 401 ||
+      (this.status === 500 && EXPIRED_JWT.has(this.message))
+    );
   }
 
   /** Field-keyed map for react-hook-form / useActionState. Keys are lowercased. */
@@ -549,7 +754,10 @@ export class ApiError extends Error {
 }
 
 const EXPIRED_JWT = new Set([
-  'jwt expired', 'invalid signature', 'jwt malformed', 'invalid token',
+  'jwt expired',
+  'invalid signature',
+  'jwt malformed',
+  'invalid token',
 ]);
 
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
@@ -557,7 +765,11 @@ const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 /** Collapses all five backend error shapes (§3) into one ApiError. */
 export async function toApiError(res: Response): Promise<ApiError> {
   let body: any = null;
-  try { body = await res.json(); } catch { /* non-JSON body */ }
+  try {
+    body = await res.json();
+  } catch {
+    /* non-JSON body */
+  }
 
   const issues: FieldIssue[] = Array.isArray(body?.errorDetails?.issues)
     ? body.errorDetails.issues
@@ -596,10 +808,18 @@ export async function writeSession({ accessToken, refreshToken }: TokenPair) {
   const secure = process.env.NODE_ENV === 'production';
 
   jar.set(ACCESS_COOKIE, accessToken, {
-    httpOnly: true, secure, sameSite: 'lax', path: '/', maxAge: SEVEN_DAYS,
+    httpOnly: true,
+    secure,
+    sameSite: 'lax',
+    path: '/',
+    maxAge: SEVEN_DAYS,
   });
   jar.set(REFRESH_COOKIE, refreshToken, {
-    httpOnly: true, secure, sameSite: 'lax', path: '/', maxAge: SEVEN_DAYS,
+    httpOnly: true,
+    secure,
+    sameSite: 'lax',
+    path: '/',
+    maxAge: SEVEN_DAYS,
   });
 }
 
@@ -637,7 +857,10 @@ import { redirect } from 'next/navigation';
 import { ApiError, toApiError } from '@/lib/api/errors';
 import type { ApiResponse } from '@/lib/api/types';
 import {
-  clearSession, readSession, requireSession, writeSession,
+  clearSession,
+  readSession,
+  requireSession,
+  writeSession,
 } from '@/lib/auth/session';
 
 const BASE = process.env.API_BASE_URL!;
@@ -652,7 +875,8 @@ type RequestOptions = Omit<RequestInit, 'body'> & {
 function buildUrl(path: string, query?: RequestOptions['query']) {
   const url = new URL(BASE + path);
   for (const [key, value] of Object.entries(query ?? {})) {
-    if (value !== undefined && value !== '') url.searchParams.set(key, String(value));
+    if (value !== undefined && value !== '')
+      url.searchParams.set(key, String(value));
   }
   return url.toString();
 }
@@ -688,7 +912,10 @@ export async function apiRequest<T>(
     // An expired access token arrives as HTTP 500 "jwt expired" (§3g).
     if (error.isAuthExpired) {
       const refreshed = await refreshTokens();
-      if (!refreshed) { await clearSession(); redirect('/login'); }
+      if (!refreshed) {
+        await clearSession();
+        redirect('/login');
+      }
       res = await send(refreshed.accessToken);
     } else {
       throw error;
@@ -700,7 +927,10 @@ export async function apiRequest<T>(
 }
 
 /** Convenience wrapper for the common case where only `data` matters. */
-export async function api<T>(path: string, options?: RequestOptions): Promise<T> {
+export async function api<T>(
+  path: string,
+  options?: RequestOptions,
+): Promise<T> {
   return (await apiRequest<T>(path, options)).data;
 }
 
@@ -708,7 +938,10 @@ export async function api<T>(path: string, options?: RequestOptions): Promise<T>
 // Rotation deletes the old row (§4d), so two concurrent refreshes log the user
 // out. One in-flight promise per server instance is enough to prevent that
 // within a request burst.
-let inFlight: Promise<{ accessToken: string; refreshToken: string } | null> | null = null;
+let inFlight: Promise<{
+  accessToken: string;
+  refreshToken: string;
+} | null> | null = null;
 
 function refreshTokens() {
   inFlight ??= (async () => {
@@ -725,7 +958,8 @@ function refreshTokens() {
       if (!res.ok) return null;
 
       const json = (await res.json()) as ApiResponse<{
-        accessToken: string; refreshToken: string;
+        accessToken: string;
+        refreshToken: string;
       }>;
       await writeSession(json.data);
       return json.data;
@@ -786,18 +1020,19 @@ Legend: 🔓 public (no auth) · 🔐 `auth(ADMIN)` — bare access token in `Au
 
 **Body**
 
-| Field | Type | Rules |
-| --- | --- | --- |
-| `email` | string | must be a valid email |
-| `password` | string | non-empty |
+| Field      | Type   | Rules                 |
+| ---------- | ------ | --------------------- |
+| `email`    | string | must be a valid email |
+| `password` | string | non-empty             |
 
 **200**
 
 ```jsonc
 {
-  "success": true, "statusCode": 200,
+  "success": true,
+  "statusCode": 200,
   "message": "User logged in successfully",
-  "data": { "accessToken": "eyJ…", "refreshToken": "eyJ…" }
+  "data": { "accessToken": "eyJ…", "refreshToken": "eyJ…" },
 }
 ```
 
@@ -805,13 +1040,13 @@ Also sets `accessToken`/`refreshToken` cookies — **ignore them** (§4b) and us
 
 **Failure modes**
 
-| Status | Cause | Body `message` |
-| --- | --- | --- |
-| 400 | Zod | title-cased field messages |
-| 401 | wrong password | `Invalid Credentials` |
-| 403 | `status !== ACTIVE` | `Your account has been suspended. Please contact support.` |
-| 403 | `role !== ADMIN` | `Access denied. Only administrators are permitted to log in.` |
-| 404 | unknown email | `Record not found` |
+| Status | Cause               | Body `message`                                                |
+| ------ | ------------------- | ------------------------------------------------------------- |
+| 400    | Zod                 | title-cased field messages                                    |
+| 401    | wrong password      | `Invalid Credentials`                                         |
+| 403    | `status !== ACTIVE` | `Your account has been suspended. Please contact support.`    |
+| 403    | `role !== ADMIN`    | `Access denied. Only administrators are permitted to log in.` |
+| 404    | unknown email       | `Record not found`                                            |
 
 Collapse 401 and 404 into one generic message in the UI — don't confirm which emails exist.
 
@@ -825,15 +1060,23 @@ import { apiRequest, ApiError } from '@/lib/api/client';
 import { writeSession, clearSession } from '@/lib/auth/session';
 import type { TokenPair } from '@/lib/api/types';
 
-export type LoginState = { error?: string; fieldErrors?: Record<string, string> };
+export type LoginState = {
+  error?: string;
+  fieldErrors?: Record<string, string>;
+};
 
-export async function login(_prev: LoginState, formData: FormData): Promise<LoginState> {
+export async function login(
+  _prev: LoginState,
+  formData: FormData,
+): Promise<LoginState> {
   const email = String(formData.get('email') ?? '');
   const password = String(formData.get('password') ?? '');
 
   try {
     const { data } = await apiRequest<TokenPair>('/auth/login', {
-      method: 'POST', anonymous: true, body: { email, password },
+      method: 'POST',
+      anonymous: true,
+      body: { email, password },
     });
     await writeSession(data);
   } catch (error) {
@@ -851,7 +1094,11 @@ export async function login(_prev: LoginState, formData: FormData): Promise<Logi
 }
 
 export async function logout() {
-  try { await apiRequest('/auth/logout', { method: 'POST' }); } catch { /* best effort */ }
+  try {
+    await apiRequest('/auth/logout', { method: 'POST' });
+  } catch {
+    /* best effort */
+  }
   await clearSession();
   redirect('/login');
 }
@@ -864,11 +1111,21 @@ import { useActionState } from 'react';
 import { login, type LoginState } from '@/actions/auth';
 
 export default function LoginPage() {
-  const [state, action, pending] = useActionState<LoginState, FormData>(login, {});
+  const [state, action, pending] = useActionState<LoginState, FormData>(
+    login,
+    {},
+  );
   return (
     <form action={action}>
-      <input name="email" type="email" required aria-invalid={!!state.fieldErrors?.email} />
-      {state.fieldErrors?.email && <p role="alert">{state.fieldErrors.email}</p>}
+      <input
+        name="email"
+        type="email"
+        required
+        aria-invalid={!!state.fieldErrors?.email}
+      />
+      {state.fieldErrors?.email && (
+        <p role="alert">{state.fieldErrors.email}</p>
+      )}
       <input name="password" type="password" required />
       {state.error && <p role="alert">{state.error}</p>}
       <button disabled={pending}>{pending ? 'Signing in…' : 'Sign in'}</button>
@@ -885,11 +1142,11 @@ export default function LoginPage() {
 
 **200** → `data: { accessToken, refreshToken }` — the refresh token is **rotated**; the old one is deleted and is no longer valid.
 
-| Status | Cause |
-| --- | --- |
-| 401 | missing / unknown / DB-expired token, or `jwt.verify` failure |
-| 403 | user is no longer `ACTIVE` (all their refresh rows are deleted) |
-| 404 | the user row is gone |
+| Status | Cause                                                           |
+| ------ | --------------------------------------------------------------- |
+| 401    | missing / unknown / DB-expired token, or `jwt.verify` failure   |
+| 403    | user is no longer `ACTIVE` (all their refresh rows are deleted) |
+| 404    | the user row is gone                                            |
 
 Handled centrally by `refreshTokens()` in §7.4 — pages never call this directly.
 
@@ -909,14 +1166,20 @@ No parameters. Returns the logged-in admin, password omitted, **profile not incl
 
 ```jsonc
 {
-  "success": true, "statusCode": 200,
+  "success": true,
+  "statusCode": 200,
   "message": "User profile retrieved successfully",
   "data": {
-    "id": "…", "name": "Rakib", "email": "admin@example.com", "phone": null,
-    "role": "ADMIN", "status": "ACTIVE",
+    "id": "…",
+    "name": "Rakib",
+    "email": "admin@example.com",
+    "phone": null,
+    "role": "ADMIN",
+    "status": "ACTIVE",
     "lastActiveAt": "2026-08-17T09:12:44.000Z",
-    "createdAt": "…", "updatedAt": "…"
-  }
+    "createdAt": "…",
+    "updatedAt": "…",
+  },
 }
 ```
 
@@ -937,22 +1200,22 @@ export const getCurrentAdmin = cache(() => api<AdminUser>('/users/me'));
 
 **Body** — all fields optional, but Zod strips unknown keys and an empty object is accepted (it becomes a no-op write).
 
-| Field | Type | Rules |
-| --- | --- | --- |
-| `name` | string | 2–100 chars |
-| `email` | string | valid email |
-| `profilePhoto` | string | valid URL |
-| `bio` | string | ≤ 500 chars |
+| Field          | Type   | Rules       |
+| -------------- | ------ | ----------- |
+| `name`         | string | 2–100 chars |
+| `email`        | string | valid email |
+| `profilePhoto` | string | valid URL   |
+| `bio`          | string | ≤ 500 chars |
 
 `name`/`email` update `users`; `profilePhoto`/`bio` update the nested `profiles` row.
 
 **200** → the updated user **with** `profile` included.
 
-| Status | Cause |
-| --- | --- |
-| 400 | Zod |
-| 404 | the admin has no `profiles` row — the nested `update` raises P2025. The seed creates one; an admin inserted by hand may not have it. |
-| 409 | `email` already belongs to another user (`Duplicate Error`, message in `errorMessage`) |
+| Status | Cause                                                                                                                                |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 400    | Zod                                                                                                                                  |
+| 404    | the admin has no `profiles` row — the nested `update` raises P2025. The seed creates one; an admin inserted by hand may not have it. |
+| 409    | `email` already belongs to another user (`Duplicate Error`, message in `errorMessage`)                                               |
 
 ```ts
 'use server';
@@ -968,7 +1231,10 @@ export async function updateProfile(_prev: unknown, formData: FormData) {
   );
 
   try {
-    await api<AdminUserWithProfile>('/users/my-profile', { method: 'PUT', body: payload });
+    await api<AdminUserWithProfile>('/users/my-profile', {
+      method: 'PUT',
+      body: payload,
+    });
   } catch (error) {
     if (error instanceof ApiError) {
       return error.isValidation
@@ -993,22 +1259,34 @@ No parameters.
 
 ```jsonc
 {
-  "success": true, "statusCode": 200,
+  "success": true,
+  "statusCode": 200,
   "message": "Discord sync status retrieved successfully",
   "data": {
-    "bot":    { "connected": true, "tag": "DailyBot#1234", "guildId": "1234567890123456789" },
-    "members":{ "total": 5201, "active": 5187, "departed": 14 },
+    "bot": {
+      "connected": true,
+      "tag": "DailyBot#1234",
+      "guildId": "1234567890123456789",
+    },
+    "members": { "total": 5201, "active": 5187, "departed": 14 },
     "lastSync": {
-      "running": false, "startedAt": "…", "finishedAt": "…", "durationMs": 41290,
-      "fetched": 5187, "synced": 5187, "failed": 0,
-      "markedDeparted": 3, "guardTripped": false, "lastError": null
+      "running": false,
+      "startedAt": "…",
+      "finishedAt": "…",
+      "durationMs": 41290,
+      "fetched": 5187,
+      "synced": 5187,
+      "failed": 0,
+      "markedDeparted": 3,
+      "guardTripped": false,
+      "lastError": null,
     },
     "dailyUpdate": {
       "ingestionEnabled": true,
       "reason": null,
-      "channelId": "1234567890123456789"
-    }
-  }
+      "channelId": "1234567890123456789",
+    },
+  },
 }
 ```
 
@@ -1026,16 +1304,21 @@ No body. Fires a full guild re-sync **without awaiting it** — a real sync take
 
 ```jsonc
 {
-  "success": true, "statusCode": 202,
+  "success": true,
+  "statusCode": 202,
   "message": "Member sync started",
-  "data": { "accepted": true, "guildId": "…", "startedAt": "2026-08-17T09:20:00.000Z" }
+  "data": {
+    "accepted": true,
+    "guildId": "…",
+    "startedAt": "2026-08-17T09:20:00.000Z",
+  },
 }
 ```
 
-| Status | Cause |
-| --- | --- |
-| 409 | a sync is already running |
-| 503 | bot not connected, or the guild could not be fetched |
+| Status | Cause                                                |
+| ------ | ---------------------------------------------------- |
+| 409    | a sync is already running                            |
+| 503    | bot not connected, or the guild could not be fetched |
 
 Because the response returns before the work does, poll `GET /sync/status` until `lastSync.running` flips to `false`:
 
@@ -1046,7 +1329,9 @@ import { api } from '@/lib/api/client';
 import type { SyncTriggerResult } from '@/lib/api/types';
 
 export async function triggerMemberSync() {
-  const result = await api<SyncTriggerResult>('/discord/sync', { method: 'POST' });
+  const result = await api<SyncTriggerResult>('/discord/sync', {
+    method: 'POST',
+  });
   revalidateTag('discord-status');
   return result; // the client then polls until lastSync.running === false
 }
@@ -1064,28 +1349,34 @@ No parameters. The row is created lazily with PID defaults (18:00 / 23:59 / all 
 
 ```jsonc
 {
-  "success": true, "statusCode": 200,
+  "success": true,
+  "statusCode": 200,
   "message": "Channel schedule retrieved successfully",
   "data": {
     "schedule": {
-      "openTime": "18:00", "closeTime": "23:59",
-      "daysOfWeek": [0,1,2,3,4,5,6],
+      "openTime": "18:00",
+      "closeTime": "23:59",
+      "daysOfWeek": [0, 1, 2, 3, 4, 5, 6],
       "enabled": true,
       "timezone": "Asia/Dhaka",
       "updatedAt": "…",
-      "updatedBy": { "id": "…", "name": "Rakib", "email": "…" }
+      "updatedBy": { "id": "…", "name": "Rakib", "email": "…" },
     },
     "scheduler": {
-      "processEnabled": true, "running": true,
+      "processEnabled": true,
+      "running": true,
       "nextOpenAt": "2026-08-17T12:00:00.000Z",
       "nextLockAt": "2026-08-17T17:59:00.000Z",
       "lastRun": {
-        "action": "open", "trigger": "schedule",
-        "ranAt": "…", "ok": true, "error": null
-      }
+        "action": "open",
+        "trigger": "schedule",
+        "ranAt": "…",
+        "ok": true,
+        "error": null,
+      },
     },
-    "channel": { "id": "1234567890123456789", "isOpen": true }
-  }
+    "channel": { "id": "1234567890123456789", "isOpen": true },
+  },
 }
 ```
 
@@ -1098,12 +1389,12 @@ No parameters. The row is created lazily with PID defaults (18:00 / 23:59 / all 
 
 **Body** — a patch; every field optional, but **an empty object is rejected (400)**.
 
-| Field | Type | Rules |
-| --- | --- | --- |
-| `openTime` | string | 24-hour `HH:mm`, `00:00`–`23:59` |
-| `closeTime` | string | same |
+| Field        | Type     | Rules                                           |
+| ------------ | -------- | ----------------------------------------------- |
+| `openTime`   | string   | 24-hour `HH:mm`, `00:00`–`23:59`                |
+| `closeTime`  | string   | same                                            |
 | `daysOfWeek` | number[] | ≥ 1 entry, each 0–6 (0 = Sunday), no duplicates |
-| `enabled` | boolean | — |
+| `enabled`    | boolean  | —                                               |
 
 Do **not** send `timezone` — Zod strips it silently; the zone is fixed.
 
@@ -1119,11 +1410,15 @@ import { api, ApiError } from '@/lib/api/client';
 import type { ChannelSchedulePayload } from '@/lib/api/types';
 
 export async function updateSchedule(input: {
-  openTime?: string; closeTime?: string; daysOfWeek?: number[]; enabled?: boolean;
+  openTime?: string;
+  closeTime?: string;
+  daysOfWeek?: number[];
+  enabled?: boolean;
 }) {
   try {
     const data = await api<ChannelSchedulePayload>('/schedule/daily-update', {
-      method: 'PATCH', body: input,
+      method: 'PATCH',
+      body: input,
     });
     revalidatePath('/dashboard/schedule');
     return { data };
@@ -1142,10 +1437,10 @@ No body. Forces the channel state **now** and posts an announcement embed to the
 
 **200** → `data: { channelId, isOpen, announced }`
 
-| Status | Cause |
-| --- | --- |
-| 403 | the bot lacks `Manage Roles` on the channel — message tells the admin exactly what to grant |
-| 503 | the bot is not connected, or the permission edit failed for another reason |
+| Status | Cause                                                                                       |
+| ------ | ------------------------------------------------------------------------------------------- |
+| 403    | the bot lacks `Manage Roles` on the channel — message tells the admin exactly what to grant |
+| 503    | the bot is not connected, or the permission edit failed for another reason                  |
 
 These are **outward-facing and immediately visible to thousands of students** (they post an embed). Put them behind a confirmation dialog.
 
@@ -1161,8 +1456,8 @@ All routes 🔐. `POST /send` DMs thousands of people and **cannot be undone**.
 
 The dry run. Sends nothing.
 
-| Query | Type | Rules |
-| --- | --- | --- |
+| Query  | Type   | Rules                                                                   |
+| ------ | ------ | ----------------------------------------------------------------------- |
 | `date` | string | **required**, `YYYY-MM-DD`, a real calendar date, **not in the future** |
 
 **200** → `data: { date, targetCount, targets: ReminderTarget[] }`
@@ -1175,10 +1470,10 @@ The target definition is "currently in the guild **and** has no `daily_updates` 
 
 **Body**
 
-| Field | Type | Rules |
-| --- | --- | --- |
-| `date` | string | **required, never inferred**, `YYYY-MM-DD`, not in the future |
-| `message` | string | trimmed, 1–**1970** characters |
+| Field     | Type   | Rules                                                         |
+| --------- | ------ | ------------------------------------------------------------- |
+| `date`    | string | **required, never inferred**, `YYYY-MM-DD`, not in the future |
+| `message` | string | trimmed, 1–**1970** characters                                |
 
 The 1970 cap = Discord's 2000-character limit minus the fixed heading `⚠️ **Daily Update Reminder**` the DM is wrapped in. Enforce it in the textarea with a live counter so the admin never discovers it at submit time.
 
@@ -1186,22 +1481,26 @@ The 1970 cap = Discord's 2000-character limit minus the fixed heading `⚠️ **
 
 ```jsonc
 {
-  "success": true, "statusCode": 202,
+  "success": true,
+  "statusCode": 202,
   "message": "Reminder broadcast queued for 412 member(s). Delivery is paced and runs in the background.",
   "data": {
-    "id": "…", "reminderDate": "2026-08-16",
-    "targetCount": 412, "queuedJobs": 412, "status": "PENDING"
-  }
+    "id": "…",
+    "reminderDate": "2026-08-16",
+    "targetCount": 412,
+    "queuedJobs": 412,
+    "status": "PENDING",
+  },
 }
 ```
 
 **Nothing has been delivered when this returns.** Delivery is paced at `REMINDER_DM_PER_SECOND` (default 2/sec) — ~5,000 members is ~40 minutes. That pacing is deliberate: bursting DMs gets the bot banned, and the bot shares a process with member sync and the attendance form's membership check.
 
-| Status | Cause |
-| --- | --- |
-| 400 | Zod, or **every member already submitted** — "There is nobody to remind." |
-| 409 | a broadcast for that date is already `PENDING`/`PROCESSING` (double-click guard) — the message includes the existing id |
-| 503 | Redis unreachable, or the queue refused the jobs (the broadcast is auto-cancelled so the date isn't left blocked) |
+| Status | Cause                                                                                                                   |
+| ------ | ----------------------------------------------------------------------------------------------------------------------- |
+| 400    | Zod, or **every member already submitted** — "There is nobody to remind."                                               |
+| 409    | a broadcast for that date is already `PENDING`/`PROCESSING` (double-click guard) — the message includes the existing id |
+| 503    | Redis unreachable, or the queue refused the jobs (the broadcast is auto-cancelled so the date isn't left blocked)       |
 
 **Always run the `/targets` preview first and make the admin confirm the count.** Then redirect to the progress page:
 
@@ -1216,7 +1515,10 @@ import type { ReminderQueued } from '@/lib/api/types';
 export async function sendReminder(input: { date: string; message: string }) {
   let queued: ReminderQueued;
   try {
-    queued = await api<ReminderQueued>('/reminders/send', { method: 'POST', body: input });
+    queued = await api<ReminderQueued>('/reminders/send', {
+      method: 'POST',
+      body: input,
+    });
   } catch (error) {
     if (error instanceof ApiError) return { error: error.message }; // 409/503 read well as-is
     throw error;
@@ -1228,27 +1530,35 @@ export async function sendReminder(input: { date: string; message: string }) {
 
 #### 🔐 `GET /api/reminders` (history)
 
-| Query | Type | Default | Rules |
-| --- | --- | --- | --- |
-| `page` | number | 1 | integer ≥ 1 |
-| `limit` | number | 50 | integer 1–200 (clamped again in the repository) |
+| Query   | Type   | Default | Rules                                           |
+| ------- | ------ | ------- | ----------------------------------------------- |
+| `page`  | number | 1       | integer ≥ 1                                     |
+| `limit` | number | 50      | integer 1–200 (clamped again in the repository) |
 
 **200** — newest first, with `meta`:
 
 ```jsonc
 {
-  "success": true, "statusCode": 200,
+  "success": true,
+  "statusCode": 200,
   "message": "Reminder broadcasts retrieved successfully",
   "meta": { "page": 1, "limit": 50, "total": 23 },
   "data": [
     {
-      "id": "…", "reminderDate": "2026-08-16", "message": "…",
-      "targetCount": 412, "sentCount": 388, "failedCount": 24,
-      "status": "COMPLETED", "createdById": "…",
+      "id": "…",
+      "reminderDate": "2026-08-16",
+      "message": "…",
+      "targetCount": 412,
+      "sentCount": 388,
+      "failedCount": 24,
+      "status": "COMPLETED",
+      "createdById": "…",
       "createdBy": { "id": "…", "name": "Rakib", "email": "…" },
-      "startedAt": "…", "completedAt": "…", "createdAt": "…"
-    }
-  ]
+      "startedAt": "…",
+      "completedAt": "…",
+      "createdAt": "…",
+    },
+  ],
 }
 ```
 
@@ -1261,11 +1571,19 @@ export async function sendReminder(input: { date: string; message: string }) {
 ```jsonc
 {
   "data": {
-    "id": "…", "reminderDate": "2026-08-16", "message": "…",
-    "status": "PROCESSING", "targetCount": 412,
-    "delivered": 201, "dmClosed": 12, "failed": 3, "outstanding": 196,
-    "startedAt": "…", "completedAt": null, "createdAt": "…"
-  }
+    "id": "…",
+    "reminderDate": "2026-08-16",
+    "message": "…",
+    "status": "PROCESSING",
+    "targetCount": 412,
+    "delivered": 201,
+    "dmClosed": 12,
+    "failed": 3,
+    "outstanding": 196,
+    "startedAt": "…",
+    "completedAt": null,
+    "createdAt": "…",
+  },
 }
 ```
 
@@ -1273,23 +1591,23 @@ These four counts are read from the **recipient rows** (the source of truth), no
 
 Status meanings:
 
-| Status | Meaning for the UI |
-| --- | --- |
-| `PENDING` | queued, no job has run yet |
-| `PROCESSING` | in flight — keep polling |
-| `COMPLETED` | every recipient reached a terminal state |
-| `CANCELLED` | an admin stopped it; `outstanding` recipients were **never attempted** (that's accurate, not a failure) |
-| `FAILED` | drained but recipients were still `PENDING` — a stalled or crashed worker. Investigate. |
+| Status       | Meaning for the UI                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------------------------- |
+| `PENDING`    | queued, no job has run yet                                                                              |
+| `PROCESSING` | in flight — keep polling                                                                                |
+| `COMPLETED`  | every recipient reached a terminal state                                                                |
+| `CANCELLED`  | an admin stopped it; `outstanding` recipients were **never attempted** (that's accurate, not a failure) |
+| `FAILED`     | drained but recipients were still `PENDING` — a stalled or crashed worker. Investigate.                 |
 
 `404` if the id is unknown.
 
 #### 🔐 `GET /api/reminders/:id/recipients`
 
-| Query | Type | Default | Rules |
-| --- | --- | --- | --- |
-| `page` | number | 1 | ≥ 1 |
-| `limit` | number | 50 | 1–200 |
-| `status` | enum | — | `PENDING` \| `DELIVERED` \| `DM_CLOSED` \| `FAILED` |
+| Query    | Type   | Default | Rules                                               |
+| -------- | ------ | ------- | --------------------------------------------------- |
+| `page`   | number | 1       | ≥ 1                                                 |
+| `limit`  | number | 50      | 1–200                                               |
+| `status` | enum   | —       | `PENDING` \| `DELIVERED` \| `DM_CLOSED` \| `FAILED` |
 
 **200** — sorted by `discordUsername` ascending, with `meta`:
 
@@ -1298,12 +1616,18 @@ Status meanings:
   "meta": { "page": 1, "limit": 50, "total": 412 },
   "data": [
     {
-      "id": "…", "memberId": "…", "status": "DM_CLOSED",
+      "id": "…",
+      "memberId": "…",
+      "status": "DM_CLOSED",
       "errorMessage": "Cannot send messages to this user",
       "sentAt": null,
-      "member": { "discordUserId": "…", "discordUsername": "rakib_", "displayName": "Rakib" }
-    }
-  ]
+      "member": {
+        "discordUserId": "…",
+        "discordUsername": "rakib_",
+        "displayName": "Rakib",
+      },
+    },
+  ],
 }
 ```
 
@@ -1317,10 +1641,10 @@ Contact details (phone/email) are deliberately **not** exposed here — this is 
 
 No body. **200** → the same payload as `GET /:id`, already showing `status: "CANCELLED"`.
 
-| Status | Cause |
-| --- | --- |
-| 404 | unknown id |
-| 409 | already `COMPLETED`/`FAILED`/`CANCELLED` — "…cannot be cancelled." |
+| Status | Cause                                                              |
+| ------ | ------------------------------------------------------------------ |
+| 404    | unknown id                                                         |
+| 409    | already `COMPLETED`/`FAILED`/`CANCELLED` — "…cannot be cancelled." |
 
 Cancelling sets the session status; the worker re-reads it before every send, so in-flight and queued jobs stop delivering. Recipients never attempted stay `PENDING` — show them as "not attempted", never as failures.
 
@@ -1338,10 +1662,14 @@ Queue and worker health. No parameters.
     "dmPerSecond": 2,
     "queueDepth": { "waiting": 196, "active": 2, "delayed": 0, "failed": 1 },
     "lastFallback": {
-      "reminderId": "…", "ranAt": "…", "ok": false,
-      "mentioned": 0, "error": "Missing Permissions", "missingPermission": true
-    }
-  }
+      "reminderId": "…",
+      "ranAt": "…",
+      "ok": false,
+      "mentioned": 0,
+      "error": "Missing Permissions",
+      "missingPermission": true,
+    },
+  },
 }
 ```
 
@@ -1353,17 +1681,48 @@ Queue and worker health. No parameters.
 
 ### 8.6 Attendance (public) — `/api/attendance`
 
-🔓 **The only two routes in the application with no `auth()` middleware.** Students are not `users` rows, so there is no credential the form could present. What replaces authentication:
+🔓 **The only three routes in the application with no `auth()` middleware.** Students are not `users` rows, so there is no credential the form could present. What replaces authentication:
 
-1. The handle must resolve to a member with `isInGuild: true`.
+1. For `/verify-user` and `/submit`: the handle must resolve to a member with `isInGuild: true`.
 2. Per-IP rate limits (§9).
 
-Both checks re-run on the write path — `submit` never trusts that `verify-user` was called.
+Both membership checks re-run on the write path — `submit` never trusts that `verify-user` was called. `/window` exposes only the schedule submission window (no member data) and is rate limited.
+
+#### 🔓 `GET /api/attendance/window`
+
+Returns the current attendance submission window projection.
+
+**No parameters.** Always **200** — this is a routine status query for the public form.
+
+> `isOpen` is computed purely from the stored schedule row (`openTime`, `closeTime`, `daysOfWeek`, `enabled`) and the current Asia/Dhaka clock. It is **never** read from the live Discord channel permission overwrite, guaranteeing zero Discord API calls under high traffic. An admin locking the Discord channel manually will not affect `isOpen`.
+
+```jsonc
+{
+  "success": true,
+  "statusCode": 200,
+  "message": "Attendance window retrieved successfully",
+  "data": {
+    "isOpen": true,                               // whether the window is open right now
+    "date": "2026-08-18",                         // today's Asia/Dhaka civil date
+    "openTime": "18:00",                          // HH:mm, Asia/Dhaka
+    "closeTime": "23:59",                         // HH:mm, Asia/Dhaka
+    "daysOfWeek": [0, 1, 2, 3, 4, 5, 6],          // 0=Sunday..6=Saturday
+    "enabled": true,                              // false = paused (window never opens)
+    "timezone": "Asia/Dhaka",                     // reported timezone constant
+    "nextOpenAt": "2026-08-19T12:00:00.000Z",     // next future opening instant (null when enabled: false)
+    "closesAt": "2026-08-18T17:59:00.000Z"        // closing instant for currently open window (null when isOpen: false)
+  }
+}
+```
+
+- **`nextOpenAt`** is reported even while the window is currently open (naming the *next* occurrence). It is `null` only when `enabled` is `false`.
+- **`closesAt`** is populated only when `isOpen` is `true`; otherwise it is `null`.
+- The response carries **no admin-shaped fields**: no `updatedBy`, no `scheduler`, no `lastRun`, and no Discord channel or guild ID.
 
 #### 🔓 `GET /api/attendance/verify-user?username=…`
 
-| Query | Type | Rules |
-| --- | --- | --- |
+| Query      | Type   | Rules                                                                                                                                |
+| ---------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `username` | string | required, trimmed, non-empty, must pass `/^(?!.*\.{2})[a-z0-9_.]{2,32}$/` after normalization (trim → strip leading `@` → lowercase) |
 
 A leading or trailing `_` or `.` is **valid** (`.rabbil`, `itzazad_`). Don't tighten this client-side — an earlier stricter regex locked out 5.3% of real members.
@@ -1401,39 +1760,340 @@ A malformed handle is a **400** (Zod). The form must tell "fix your typing" (400
 
 **Body** — exactly these four fields; anything else is stripped.
 
-| Field | Type | Rules |
-| --- | --- | --- |
-| `name` | string | trimmed, 3–100 chars, `^[\p{L}\s]+$` — **Unicode letters**, so Bengali names are accepted |
-| `phone` | string | trimmed, `^(?:\+?880\|0)1[3-9]\d{8}$` — `01711000000`, `+8801711000000`, or `8801711000000` |
-| `email` | string | valid email |
-| `discordUsername` | string | same rule as `verify-user` |
+| Field             | Type   | Rules                                                                                       |
+| ----------------- | ------ | ------------------------------------------------------------------------------------------- |
+| `name`            | string | trimmed, 3–100 chars, `^[\p{L}\s]+$` — **Unicode letters**, so Bengali names are accepted   |
+| `phone`           | string | trimmed, `^(?:\+?880\|0)1[3-9]\d{8}$` — `01711000000`, `+8801711000000`, or `8801711000000` |
+| `email`           | string | valid email                                                                                 |
+| `discordUsername` | string | same rule as `verify-user`                                                                  |
 
 **201**
 
 ```jsonc
 {
-  "success": true, "statusCode": 201,
+  "success": true,
+  "statusCode": 201,
   "message": "Attendance submitted successfully for 2026-08-17",
   "data": {
     "attendanceDate": "2026-08-17",
     "submittedAt": "2026-08-17T14:22:31.000Z",
-    "member": { "id": "…", "discordUserId": "…", "discordUsername": "rakib_", "displayName": "Rakib", "avatarUrl": "…" }
-  }
+    "member": {
+      "id": "…",
+      "discordUserId": "…",
+      "discordUsername": "rakib_",
+      "displayName": "Rakib",
+      "avatarUrl": "…",
+    },
+  },
 }
 ```
 
-| Status | Cause | Notes |
-| --- | --- | --- |
-| 400 | Zod | field-level; map `errorDetails.issues` to inputs |
-| **404** | handle unknown or the member has left the guild | on the **write** path not-found is a genuine failure, unlike `verify-user` |
-| 409 | already submitted today | message names the date: `You have already submitted your attendance for today (2026-08-17).` |
-| 429 | rate limit | 5 per 15 min per IP |
+| Status  | Cause                                           | Notes                                                                                        |
+| ------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| 400     | Zod                                             | field-level; map `errorDetails.issues` to inputs                                             |
+| **404** | handle unknown or the member has left the guild | on the **write** path not-found is a genuine failure, unlike `verify-user`                   |
+| 409     | already submitted today                         | message names the date: `You have already submitted your attendance for today (2026-08-17).` |
+| 429     | rate limit                                      | 5 per 15 min per IP                                                                          |
 
 The 409 is enforced by a database unique constraint (`(memberId, attendanceDate)`), not a read-then-write check — two simultaneous submissions still produce exactly one row.
 
 ---
 
-### 8.7 Root
+### 8.7 Attendance announcement — `/api/announcement`
+
+All routes 🔐. This is the evening message posted into `#attendance` — the one that tells ~5,000 students to submit. Nothing here is student-facing, unlike §8.6.
+
+Two things make this section different from the schedule in §8.4: the message body is **admin-editable free text**, and the send can **mention the whole guild**. Both are covered below.
+
+#### 🔐 `GET /api/announcement/attendance`
+
+No parameters. The row is created lazily on first read (the current Bangla message, 19:00, all seven days, enabled, nothing mentioned), so this never 404s.
+
+```jsonc
+{
+  "success": true,
+  "statusCode": 200,
+  "message": "Attendance announcement retrieved successfully",
+  "data": {
+    "template": {
+      "body": "Date: {{date}}\nসবাই রাত {{close_time}} …",
+      "terminationDays": 3,
+      "mentionEveryone": false,
+      "mentionRoleIds": [],
+      "mentionUsernames": [],
+      "updatedAt": "…",
+      "updatedBy": { "id": "…", "name": "Rakib", "email": "…" },
+    },
+    "schedule": {
+      "announceTime": "19:00",
+      "daysOfWeek": [0, 1, 2, 3, 4, 5, 6],
+      "enabled": true,
+      "timezone": "Asia/Dhaka",
+    },
+    "preview": {
+      "content": "Date: 2026-08-18\nসবাই রাত 23:59 … <#1466…>",
+      "length": 537,
+      "limit": 2000,
+      "closeTime": "23:59",
+      "mentions": { "roleIds": [], "userIds": [], "unresolved": [] },
+    },
+    "supportedPlaceholders": ["{{date}}", "{{close_time}}", "…"],
+    "scheduler": {
+      "processEnabled": true,
+      "running": true,
+      "nextRunAt": "2026-08-18T13:00:00.000Z",
+      "lastOutcome": null,
+    },
+    "channel": { "id": "1467526520347037729" },
+    "today": { "date": "2026-08-18", "posted": false, "attempts": [] },
+  },
+}
+```
+
+- **`template.body` is the raw text with placeholders unexpanded — that is what the editor binds to.** `preview.content` is the same body rendered against today's live values plus the mention line, i.e. exactly what students would read. Never show `preview.content` in an editable field; a round-trip would bake today's date into the stored template.
+- **`preview.closeTime` is read from the `#daily-update` schedule** (§8.4), not stored here. Changing the close time there changes this message without anyone editing it. That is the whole point — don't offer a close-time field on this screen.
+- `today.posted` and `today.attempts` are how you show "sent today ✓". An attempt stuck in `SENDING` means a crash between the claim and the post; a forced send (below) recovers it.
+- **`scheduler.lastOutcome` is where a missing `Send Messages` permission shows up.** Surface it — the only other symptom is a channel that quietly stops being announced in.
+- There is deliberately **no boot reconcile**: a missed announcement is never posted late. If `today.posted` is false after `nextRunAt` has passed, that day needs a manual send.
+- Costs no Discord API call for the channel state (unlike §8.4), but it **does** resolve mention targets, so don't poll it tightly.
+
+#### 🔐 `PATCH /api/announcement/attendance`
+
+**Body** — a patch; every field optional, but **an empty object is rejected (400)**.
+
+| Field              | Type     | Rules                                                               |
+| ------------------ | -------- | ------------------------------------------------------------------- |
+| `body`             | string   | non-empty; only the supported placeholders                          |
+| `terminationDays`  | number   | integer 1–365                                                       |
+| `mentionEveryone`  | boolean  | see the warning below                                               |
+| `mentionRoleIds`   | string[] | each a 17–20 digit snowflake, no duplicates; `[]` clears            |
+| `mentionUsernames` | string[] | Discord handles, normalized server-side, no duplicates; `[]` clears |
+| `announceTime`     | string   | 24-hour `HH:mm`, `00:00`–`23:59`                                    |
+| `daysOfWeek`       | number[] | ≥ 1 entry, each 0–6 (0 = Sunday), no duplicates                     |
+| `enabled`          | boolean  | pauses the timed post, keeps everything else                        |
+
+Do **not** send `timezone` — Zod strips it silently; the zone is fixed.
+
+**Two service-level 400s (not from Zod, so the message arrives un-Title-Cased and is safe to show verbatim):**
+
+1. **Unknown placeholder.** `{{attendance_link}}` in the body →
+   `Unknown placeholder(s): {{attendance_link}}. Supported placeholders are {{date}}, {{close_time}}, {{daily_update_channel_id}}, {{attendance_form_link}}, {{termination_day}}.`
+   Render `supportedPlaceholders` as click-to-insert chips and this becomes hard to hit.
+2. **Too long once rendered.** The check measures the **rendered** message plus the mention line against Discord's 2,000 characters, not the raw body. A body that looks short can still fail once placeholders expand and twelve role pings are appended. Show `preview.length / preview.limit` live as they type — the counter must be driven by the preview, not by `body.length`.
+
+> ⚠️ **`mentionEveryone: true` pings every member of the guild, every evening, until it is turned off.** It is the only way the announcement can notify the whole server — a literal `@everyone` typed into `body` is inert, because `allowedMentions` is built from these fields alone and never parsed from the text. Put this behind an explicit confirmation that names the member count, and show it prominently on the read screen. The admin who set it is recorded in `template.updatedBy`.
+
+**200** → the same payload shape as `GET`, already reflecting the change. Changing `announceTime`, `daysOfWeek`, or `enabled` rebuilds the cron task in-process; no restart needed. A reload failure does **not** fail the request (the row is saved) — it surfaces under `scheduler` on the next read.
+
+```ts
+// actions/announcement.ts
+'use server';
+import { revalidatePath } from 'next/cache';
+import { api, ApiError } from '@/lib/api/client';
+import type { AnnouncementPayload } from '@/lib/api/types';
+
+export async function updateAnnouncement(input: {
+  body?: string;
+  terminationDays?: number;
+  mentionEveryone?: boolean;
+  mentionRoleIds?: string[];
+  mentionUsernames?: string[];
+  announceTime?: string;
+  daysOfWeek?: number[];
+  enabled?: boolean;
+}) {
+  try {
+    const data = await api<AnnouncementPayload>('/announcement/attendance', {
+      method: 'PATCH',
+      body: input,
+    });
+    revalidatePath('/dashboard/announcement');
+    return { data };
+  } catch (error) {
+    if (error instanceof ApiError) return { error: error.message };
+    throw error;
+  }
+}
+```
+
+Build the schedule half as a time picker + weekday checkboxes. **Never expose a cron field** — same rule as §8.4.
+
+#### 🔐 `POST /api/announcement/attendance/preview`
+
+**Body** — `{ body?: string, terminationDays?: number }`. Both optional; omit everything to preview what is stored.
+
+Renders against today's live values and **stores nothing**. Use it for the live preview pane while an admin types (debounce it — it resolves mention targets on each call).
+
+**200** → `data: AnnouncementPreview`. Rejects an unknown placeholder with the same 400 as `PATCH`, so the editor can show the error before anyone saves.
+
+#### 🔐 `POST /api/announcement/attendance/send`
+
+**Body** — `{ force?: boolean }` (defaults to `false`).
+
+Posts **immediately**, leaving the stored schedule untouched. Works on every process, including one where `SCHEDULER_ENABLED=false`.
+
+**200** → `data: AnnouncementSendResult`.
+
+| Status | Cause                                                                                              |
+| ------ | -------------------------------------------------------------------------------------------------- |
+| 409    | today is already posted — the message names the earlier post's time and attempt                    |
+| 403    | the bot lacks `Send Messages` on the attendance channel — the failure does **not** consume the day |
+| 503    | the bot is not connected, or Discord refused the message for another reason                        |
+
+- **At most one post per Dhaka day**, enforced by a database claim rather than by timing — a double-clicked button gets the 409, not a second message. `{ "force": true }` is the only way to post twice in one day and files the second one as the next `attempt`.
+- **A failed send does not consume the day.** After fixing a permission, retry plainly; no `force` needed.
+- This is **outward-facing and irreversible** — potentially a mass mention to thousands of students. Put it behind a confirmation dialog that shows `preview.content` and, when `mentionEveryone` is on, says so explicitly.
+
+---
+
+### 8.8 Daily status — `/api/daily-status`
+
+All routes 🔐. These endpoints feed the admin daily status dashboard, member status table, member history dialog, and CSV export.
+
+#### 🔐 `GET /api/daily-status/counts?date=YYYY-MM-DD`
+
+Summary overview figures for a given Asia/Dhaka civil date.
+
+| Query  | Type   | Rules                                           |
+| ------ | ------ | ----------------------------------------------- |
+| `date` | string | **required**, `YYYY-MM-DD`, valid calendar date |
+
+**200**
+
+```jsonc
+{
+  "success": true,
+  "statusCode": 200,
+  "message": "Daily status counts retrieved successfully",
+  "data": {
+    "date": "2026-08-18",
+    "totalMembers": 5187,
+    "attendanceSubmitted": 4320,
+    "dailyUpdateSubmitted": 3000,
+    "bothComplete": 2800,
+    "missingUpdateOnly": 1520,
+    "missingAttendanceOnly": 200,
+    "missingBoth": 667
+  }
+}
+```
+
+- Every count is guaranteed to be a JSON **number**, not a bigint.
+- Invariant: `bothComplete + missingUpdateOnly + missingAttendanceOnly + missingBoth === totalMembers`.
+- **Past dates work.** The frontend 7-day trend chart calls this endpoint 7 times in parallel for historical days.
+
+#### 🔐 `GET /api/daily-status?date=YYYY-MM-DD&page=1&limit=50&status=&search=`
+
+Paginated list of active guild members and their attendance/daily update status for a given date.
+
+| Query    | Type   | Rules                                                                                  |
+| -------- | ------ | -------------------------------------------------------------------------------------- |
+| `date`   | string | **required**, `YYYY-MM-DD`, valid calendar date                                        |
+| `page`   | number | optional, integer ≥ 1, default `1`                                                     |
+| `limit`  | number | optional, integer 1–200, default `50`                                                  |
+| `status` | enum   | optional: `COMPLETE` \| `MISSING_UPDATE` \| `MISSING_ATTENDANCE` \| `MISSING_BOTH`     |
+| `search` | string | optional, case-insensitive partial search on name, phone, email, or `discordUsername`  |
+
+`status` and `search` combine (AND), applied before pagination.
+
+**200**
+
+```jsonc
+{
+  "success": true,
+  "statusCode": 200,
+  "message": "Daily status retrieved successfully",
+  "meta": {
+    "page": 1,
+    "limit": 50,
+    "total": 1520
+  },
+  "data": [
+    {
+      "memberId": "cm1234567890",
+      "discordUserId": "123456789012345678",
+      "discordUsername": "rakib_dev",
+      "displayName": "Rakib",
+      "name": "Rakibul Hasan",
+      "email": "rakib@example.com",
+      "phone": "01711000000",
+      "hasAttendance": true,
+      "hasDailyUpdate": false,
+      "status": "MISSING_UPDATE",
+      "attendanceSubmittedAt": "2026-08-18T14:22:31.000Z"
+    }
+  ]
+}
+```
+
+- `meta.total` is the **filtered** row count (matching the active search/status filters), driving the UI pager.
+
+#### 🔐 `GET /api/daily-status/members/:memberId?date=YYYY-MM-DD`
+
+Detailed status for a specific member on a given date, including their posted `#daily-update` messages.
+
+| Param      | Type   | Rules                                           |
+| ---------- | ------ | ----------------------------------------------- |
+| `memberId` | string | **required**, member CUID/ID                    |
+| `date`     | string | **required**, `YYYY-MM-DD`, valid calendar date |
+
+**200**
+
+```jsonc
+{
+  "success": true,
+  "statusCode": 200,
+  "message": "Member daily status retrieved successfully",
+  "data": {
+    "memberId": "cm1234567890",
+    "discordUserId": "123456789012345678",
+    "discordUsername": "rakib_dev",
+    "displayName": "Rakib",
+    "name": "Rakibul Hasan",
+    "email": "rakib@example.com",
+    "phone": "01711000000",
+    "hasAttendance": true,
+    "hasDailyUpdate": true,
+    "status": "COMPLETE",
+    "attendanceSubmittedAt": "2026-08-18T14:22:31.000Z",
+    "messages": [
+      {
+        "id": "cmupdate123",
+        "content": "Today I implemented the public window endpoint.",
+        "postedAt": "2026-08-18T18:40:12.000Z"
+      }
+    ]
+  }
+}
+```
+
+- `messages: []` when no messages were posted on that date.
+- **404** if `memberId` is not found.
+
+#### 🔐 `GET /api/daily-status/export?date=YYYY-MM-DD&status=&search=&format=csv`
+
+Exports filtered daily status rows as a direct file attachment.
+
+| Query    | Type   | Rules                                           |
+| -------- | ------ | ----------------------------------------------- |
+| `date`   | string | **required**, `YYYY-MM-DD`, valid calendar date |
+| `status` | enum   | optional, same filter as table                  |
+| `search` | string | optional, same search as table                  |
+| `format` | string | optional, `csv` (default)                       |
+
+**200** (File attachment)
+
+```
+Content-Type: text/csv; charset=utf-8
+Content-Disposition: attachment; filename="daily-status-2026-08-18.csv"
+```
+
+- Streams batches of rows to support exporting thousands of members without memory exhaustion.
+- Escapes spreadsheet formula injection by prepending `'` to values starting with `=`, `+`, `-`, or `@`.
+
+---
+
+### 8.9 Root
 
 `GET /` → `Hello, World!` (plain text, not the envelope). Usable as a liveness probe. There is **no** `/api/health` endpoint.
 
@@ -1441,10 +2101,11 @@ The 409 is enforced by a database unique constraint (`(memberId, attendanceDate)
 
 ## 9. Rate limits
 
-| Endpoint | Budget | Window | Applies to |
-| --- | --- | --- | --- |
-| `GET /api/attendance/verify-user` | 60 | 1 min | per IP |
-| `POST /api/attendance/submit` | 5 | 15 min | per IP |
+| Endpoint                          | Budget | Window | Applies to |
+| --------------------------------- | ------ | ------ | ---------- |
+| `GET /api/attendance/window`      | 60     | 1 min  | per IP     |
+| `GET /api/attendance/verify-user` | 60     | 1 min  | per IP     |
+| `POST /api/attendance/submit`     | 5      | 15 min | per IP     |
 
 Everything else is unlimited but admin-only.
 
@@ -1464,17 +2125,24 @@ Frontend implications:
 
 `fetch` is uncached by default in Next 16, which is the right default here — almost everything on this dashboard is operational state. Use `use cache` sparingly.
 
-| Endpoint | Strategy | Why |
-| --- | --- | --- |
-| `GET /users/me` | `no-store` + React `cache()` per render | `lastActiveAt` changes on every request |
-| `GET /discord/sync/status` | `no-store`, client-poll 5 s while `lastSync.running` | live counters |
-| `GET /schedule/daily-update` | `no-store` **always** | `channel.isOpen` is a live Discord read |
-| `GET /reminders` | `no-store`; `revalidatePath` after send/cancel | short list, cheap |
-| `GET /reminders/:id` | `no-store`, poll 2–3 s while `PENDING`/`PROCESSING` | see §11 |
-| `GET /reminders/:id/recipients` | `no-store`; refetch on page change | paginated audit |
-| `GET /reminders/status` | `no-store`, poll 10 s on the reminders page | queue health |
-| `GET /reminders/targets` | `no-store` | the preview must match what `send` will do |
-| `GET /attendance/verify-user` | `no-store`, client-side, debounced | membership changes minute to minute |
+| Endpoint                        | Strategy                                             | Why                                          |
+| ------------------------------- | ---------------------------------------------------- | -------------------------------------------- |
+| `GET /users/me`                 | `no-store` + React `cache()` per render              | `lastActiveAt` changes on every request      |
+| `GET /discord/sync/status`      | `no-store`, client-poll 5 s while `lastSync.running` | live counters                                |
+| `GET /schedule/daily-update`    | `no-store` **always**                                | `channel.isOpen` is a live Discord read      |
+| `GET /reminders`                | `no-store`; `revalidatePath` after send/cancel       | short list, cheap                            |
+| `GET /reminders/:id`            | `no-store`, poll 2–3 s while `PENDING`/`PROCESSING`  | see §11                                      |
+| `GET /reminders/:id/recipients` | `no-store`; refetch on page change                   | paginated audit                              |
+| `GET /reminders/status`         | `no-store`, poll 10 s on the reminders page          | queue health                                 |
+| `GET /reminders/targets`        | `no-store`                                           | the preview must match what `send` will do   |
+| `GET /attendance/window`        | `no-store`, client-side, on form mount               | submission window changes with schedule/time |
+| `GET /attendance/verify-user`   | `no-store`, client-side, debounced                   | membership changes minute to minute          |
+| `GET /daily-status/counts`      | `no-store`                                           | live aggregation for date                    |
+| `GET /daily-status`             | `no-store`; refetch on filter/search/page change     | paginated daily status table                 |
+| `GET /daily-status/members/:id` | `no-store`                                           | member messages and status                   |
+| `GET /daily-status/export`      | `no-store` (direct file download)                    | CSV export                                   |
+| `GET /announcement/attendance`  | `no-store`; `revalidatePath` after save/send         | `preview` and `today.posted` must be current |
+| `POST /announcement/…/preview`  | `no-store`, client-side, debounced ≥ 500 ms          | resolves mention targets on every call       |
 
 Mutations should `revalidatePath` the pages they affect, or `revalidateTag` if you tag reads. After a Server Action that only needs the client router refreshed (no tagged data), `refresh()` from `next/cache` is enough.
 
@@ -1490,8 +2158,12 @@ export default function RemindersPage() {
   return (
     <>
       <h1>Reminders</h1>
-      <Suspense fallback={<QueueHealthSkeleton />}><QueueHealth /></Suspense>
-      <Suspense fallback={<HistorySkeleton />}><BroadcastHistory page={1} /></Suspense>
+      <Suspense fallback={<QueueHealthSkeleton />}>
+        <QueueHealth />
+      </Suspense>
+      <Suspense fallback={<HistorySkeleton />}>
+        <BroadcastHistory page={1} />
+      </Suspense>
     </>
   );
 }
@@ -1519,10 +2191,15 @@ export async function GET(
   const { id } = await params;
   try {
     const data = await api<ReminderProgress>(`/reminders/${id}`);
-    return NextResponse.json(data, { headers: { 'Cache-Control': 'no-store' } });
+    return NextResponse.json(data, {
+      headers: { 'Cache-Control': 'no-store' },
+    });
   } catch (error) {
     if (error instanceof ApiError) {
-      return NextResponse.json({ message: error.message }, { status: error.status });
+      return NextResponse.json(
+        { message: error.message },
+        { status: error.status },
+      );
     }
     throw error;
   }
@@ -1547,27 +2224,46 @@ export function ProgressView({ initial }: { initial: ReminderProgress }) {
     const timer = setInterval(async () => {
       try {
         const res = await fetch(`/api/reminders/${progress.id}/progress`, {
-          signal: controller.signal, cache: 'no-store',
+          signal: controller.signal,
+          cache: 'no-store',
         });
         if (res.ok) setProgress(await res.json());
-      } catch { /* transient — the next tick retries */ }
+      } catch {
+        /* transient — the next tick retries */
+      }
     }, 3000);
 
-    return () => { clearInterval(timer); controller.abort(); };
+    return () => {
+      clearInterval(timer);
+      controller.abort();
+    };
   }, [progress.id, progress.status]);
 
   const done = progress.delivered + progress.dmClosed + progress.failed;
-  const pct = progress.targetCount ? Math.round((done / progress.targetCount) * 100) : 0;
+  const pct = progress.targetCount
+    ? Math.round((done / progress.targetCount) * 100)
+    : 0;
 
   return (
     <div>
-      <progress value={done} max={progress.targetCount} aria-label="Delivery progress" />
-      <p>{done} of {progress.targetCount} processed ({pct}%)</p>
+      <progress
+        value={done}
+        max={progress.targetCount}
+        aria-label="Delivery progress"
+      />
+      <p>
+        {done} of {progress.targetCount} processed ({pct}%)
+      </p>
       <dl>
-        <dt>Delivered</dt><dd>{progress.delivered}</dd>
-        <dt>DMs closed (mentioned in channel)</dt><dd>{progress.dmClosed}</dd>
-        <dt>Failed</dt><dd>{progress.failed}</dd>
-        <dt>{progress.status === 'CANCELLED' ? 'Never attempted' : 'Remaining'}</dt>
+        <dt>Delivered</dt>
+        <dd>{progress.delivered}</dd>
+        <dt>DMs closed (mentioned in channel)</dt>
+        <dd>{progress.dmClosed}</dd>
+        <dt>Failed</dt>
+        <dd>{progress.failed}</dd>
+        <dt>
+          {progress.status === 'CANCELLED' ? 'Never attempted' : 'Remaining'}
+        </dt>
         <dd>{progress.outstanding}</dd>
       </dl>
     </div>
@@ -1583,7 +2279,11 @@ import { api } from '@/lib/api/client';
 import type { ReminderProgress } from '@/lib/api/types';
 import { ProgressView } from './progress-view';
 
-export default async function Page({ params }: { params: Promise<{ id: string }> }) {
+export default async function Page({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
   const { id } = await params;
   const progress = await api<ReminderProgress>(`/reminders/${id}`);
   return <ProgressView initial={progress} />;
@@ -1624,8 +2324,14 @@ export function DiscordHandleField() {
   useEffect(() => {
     const handle = normalize(value);
 
-    if (!handle) { setBadge({ kind: 'idle' }); return; }
-    if (!HANDLE.test(handle)) { setBadge({ kind: 'malformed' }); return; }
+    if (!handle) {
+      setBadge({ kind: 'idle' });
+      return;
+    }
+    if (!HANDLE.test(handle)) {
+      setBadge({ kind: 'malformed' });
+      return;
+    }
 
     setBadge({ kind: 'checking' });
 
@@ -1639,11 +2345,17 @@ export function DiscordHandleField() {
           `${API}/attendance/verify-user?username=${encodeURIComponent(handle)}`,
           { signal: abort.current.signal },
         );
-        if (res.status === 429) { setBadge({ kind: 'error' }); return; }
+        if (res.status === 429) {
+          setBadge({ kind: 'error' });
+          return;
+        }
 
         const json = (await res.json()) as ApiResponse<VerifyUserPayload>;
         // Branch on data.verified — an unknown handle is still HTTP 200.
-        if (!json.data?.verified) { setBadge({ kind: 'unknown' }); return; }
+        if (!json.data?.verified) {
+          setBadge({ kind: 'unknown' });
+          return;
+        }
         setBadge(
           json.data.alreadySubmitted
             ? { kind: 'duplicate', date: json.data.attendanceDate }
@@ -1654,16 +2366,23 @@ export function DiscordHandleField() {
       }
     }, 500);
 
-    return () => { clearTimeout(timer); abort.current?.abort(); };
+    return () => {
+      clearTimeout(timer);
+      abort.current?.abort();
+    };
   }, [value]);
 
   return (
     <div>
       <label htmlFor="discordUsername">Discord username</label>
       <input
-        id="discordUsername" name="discordUsername" value={value}
+        id="discordUsername"
+        name="discordUsername"
+        value={value}
         onChange={(e) => setValue(e.target.value)}
-        autoCapitalize="none" autoCorrect="off" spellCheck={false}
+        autoCapitalize="none"
+        autoCorrect="off"
+        spellCheck={false}
         aria-describedby="handle-status"
       />
       <p id="handle-status" role="status" aria-live="polite">
@@ -1672,9 +2391,12 @@ export function DiscordHandleField() {
           'Use the name under the @ on your Discord profile — lowercase letters, numbers, _ or . only.'}
         {badge.kind === 'unknown' &&
           'We could not find that username in our Discord server. Check the spelling, or join the server first.'}
-        {badge.kind === 'duplicate' && `You already submitted your attendance for ${badge.date}.`}
-        {badge.kind === 'verified' && `✅ ${badge.payload.member!.displayName ?? badge.payload.member!.discordUsername}`}
-        {badge.kind === 'error' && 'Could not verify right now — you can still submit.'}
+        {badge.kind === 'duplicate' &&
+          `You already submitted your attendance for ${badge.date}.`}
+        {badge.kind === 'verified' &&
+          `✅ ${badge.payload.member!.displayName ?? badge.payload.member!.discordUsername}`}
+        {badge.kind === 'error' &&
+          'Could not verify right now — you can still submit.'}
       </p>
     </div>
   );
@@ -1695,12 +2417,9 @@ Form rules worth encoding:
 
 Nothing below exists on the backend today. Do not build a frontend against these paths — they will 404 with `API Not Found!`.
 
-- **The dashboard aggregation endpoints.** `dailyStatusRepository.getDailyStatusPage()` and `getDailyStatusCounts()` are written and tested in the repository layer, but no module exposes them over HTTP. There is no way to fetch per-member daily status (`COMPLETE` / `MISSING_UPDATE` / `MISSING_ATTENDANCE` / `MISSING_BOTH`), the seven overview counts, search/sort/filter, or the user-detail view.
 - **The SSE progress stream** that would wrap the reminder progress read. Poll `GET /api/reminders/:id` instead (§11).
-- **Any export endpoint** (CSV/Excel).
 - **Admin user management** (create/list/suspend admins). Admins are seeded via `bun run seed`.
-
-When the dashboard endpoints land, the seven overview figures will come from `getDailyStatusCounts` **only** — they interlock and must agree, so don't assemble a "quick count" on the frontend from the reminder targets list or anywhere else.
+- **XLSX export format** (`GET /api/daily-status/export?format=xlsx` returns 501 Not Implemented; use `format=csv`).
 
 ---
 
@@ -1725,8 +2444,14 @@ Print this next to the monitor.
 - [ ] `PATCH /schedule/daily-update` rejects an empty body, and validates `closeTime > openTime` against the **merged** result — mirror that check client-side.
 - [ ] Never expose a cron input for the schedule; times + weekday checkboxes only.
 - [ ] `POST /schedule/daily-update/open|lock` posts an announcement embed to a channel thousands of students read. Confirm first.
+- [ ] Bind the announcement editor to `template.body` (placeholders intact), **never** to `preview.content` — a round-trip would bake today's date into the stored message.
+- [ ] Drive the announcement character counter from `preview.length`, not `body.length`: the 2,000 limit is checked on the **rendered** message plus the mention line.
+- [ ] `mentionEveryone: true` pings the whole guild every evening until turned off. Confirm explicitly and show it on the read screen; a literal `@everyone` typed into the body is inert.
+- [ ] `POST /announcement/attendance/send` is a mass mention and irreversible. Second send today is a **409**; `{ "force": true }` is the only way past it.
+- [ ] Don't offer a close-time field on the announcement screen — `{{close_time}}` is read from the `#daily-update` schedule so the two can never disagree.
+- [ ] The announcement has **no boot reconcile**: if `today.posted` is false after `nextRunAt` passed, that day needs a manual send.
 - [ ] Debounce `verify-user` at 500 ms and abort stale requests — the budget is 60/min per IP.
 - [ ] Don't auto-retry `POST /submit` — 5 per 15 min per IP is the entire budget.
-- [ ] Surface `dailyUpdate.ingestionEnabled === false`, `lastSync.guardTripped`, `scheduler.lastRun.error`, and `lastFallback.missingPermission` — each is an otherwise-invisible outage.
+- [ ] Surface `dailyUpdate.ingestionEnabled === false`, `lastSync.guardTripped`, `scheduler.lastRun.error`, `lastFallback.missingPermission`, and the announcement's `scheduler.lastOutcome` — each is an otherwise-invisible outage.
 - [ ] `DM_CLOSED` is not a failure; label it "DMs closed — mentioned in channel".
 - [ ] A `CANCELLED` broadcast's `outstanding` recipients were **never attempted**, not failed.

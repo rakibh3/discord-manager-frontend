@@ -105,7 +105,7 @@ export async function apiRequest<T>(
     const refreshed = await refreshTokens();
     if (!refreshed) {
       await clearSessionQuietly();
-      redirect("/login");
+      redirect("/login-admin");
     }
 
     response = await send(refreshed.accessToken);
@@ -163,8 +163,8 @@ function refreshTokens(): Promise<{
 
       // Persisting the rotated pair is what fails during a Server Component
       // render — `cookies().set()` throws there. Returning null makes the
-      // caller redirect to `/login`, which is correct but user-visible; the
-      // proactive refresh in `proxy.ts` is what keeps it rare.
+      // caller redirect to `/login-admin`, which is correct but user-visible;
+      // the proactive refresh in `proxy.ts` is what keeps it rare.
       try {
         await writeSession(json.data);
       } catch {

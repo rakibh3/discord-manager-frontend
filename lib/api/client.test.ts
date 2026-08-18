@@ -116,14 +116,14 @@ describe("expired access token", () => {
     ).toHaveLength(0);
   });
 
-  test("a rejected refresh clears the session and redirects to /login", async () => {
+  test("a rejected refresh clears the session and redirects to /login-admin", async () => {
     install(async (call) =>
       call.url.endsWith("/auth/refresh-token")
         ? json(401, { success: false, message: "Invalid or expired refresh token" })
         : expiredJwt(),
     );
 
-    await expect(api("/users/me")).rejects.toThrow("REDIRECT:/login");
+    await expect(api("/users/me")).rejects.toThrow("REDIRECT:/login-admin");
     expect(cookieJar.has("dm_access")).toBe(false);
     expect(cookieJar.has("dm_refresh")).toBe(false);
   });

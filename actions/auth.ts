@@ -89,8 +89,8 @@ export async function login(
 /**
  * Logout is best-effort server-side and unconditional client-side: if the
  * backend call fails, the local cookies are cleared and the user lands on
- * `/login` anyway. Leaving a dead session cookie in place would be worse than
- * an orphaned refresh row on the backend.
+ * `/login-admin` anyway. Leaving a dead session cookie in place would be worse
+ * than an orphaned refresh row on the backend.
  */
 export async function logout(): Promise<never> {
   try {
@@ -101,5 +101,5 @@ export async function logout(): Promise<never> {
   }
 
   await clearSession();
-  redirect("/login");
+  redirect("/login-admin");
 }

@@ -19,6 +19,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import type { ChannelSchedulePayload } from "@/lib/api/types";
+import { formatWallClock } from "@/lib/dhaka-date";
 
 /**
  * Manual open/lock, behind a confirmation.
@@ -82,7 +83,8 @@ export function ManualOverride({
               <br />
               <br />
               The stored schedule is <strong>not</strong> changed — the next
-              scheduled lock at {payload.schedule.closeTime} still fires as
+              scheduled lock at {formatWallClock(payload.schedule.closeTime)} still
+              fires as
               normal.
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -125,7 +127,8 @@ export function ManualOverride({
               <br />
               <br />
               The stored schedule is <strong>not</strong> changed — the next
-              scheduled open at {payload.schedule.openTime} still fires as
+              scheduled open at {formatWallClock(payload.schedule.openTime)} still
+              fires as
               normal.
             </AlertDialogDescription>
           </AlertDialogHeader>

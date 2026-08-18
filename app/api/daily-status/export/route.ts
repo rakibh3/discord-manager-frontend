@@ -5,7 +5,6 @@ import { dailyStatusExportPath } from "@/lib/api/endpoints/daily-status";
 import type { DailyStatus } from "@/lib/api/types";
 import { requireSession } from "@/lib/auth/session";
 import { dhakaToday } from "@/lib/dhaka-date";
-import { DAILY_STATUS_ENABLED } from "@/lib/flags";
 
 const STATUSES = new Set<string>([
   "COMPLETE",
@@ -23,16 +22,6 @@ const STATUSES = new Set<string>([
  * the file matches what is on screen rather than being everything.
  */
 export async function GET(request: Request) {
-  if (!DAILY_STATUS_ENABLED) {
-    return NextResponse.json(
-      {
-        message:
-          "The daily-status export endpoint is not available on the backend yet.",
-      },
-      { status: 501 },
-    );
-  }
-
   const url = new URL(request.url);
   const date = url.searchParams.get("date") ?? dhakaToday();
   const rawStatus = url.searchParams.get("status") ?? undefined;

@@ -74,7 +74,7 @@ export async function proxy(request: NextRequest) {
     const tokens = await refresh(refreshToken);
     if (tokens) {
       const response =
-        pathname === "/login"
+        pathname === "/login-admin"
           ? NextResponse.redirect(new URL("/dashboard", request.url))
           : NextResponse.next();
       setSessionCookies(response, tokens);
@@ -84,9 +84,9 @@ export async function proxy(request: NextRequest) {
     // The refresh token is dead too. Drop it so the next request doesn't retry
     // a refresh that cannot succeed on every single navigation.
     const response =
-      pathname === "/login"
+      pathname === "/login-admin"
         ? NextResponse.next()
-        : NextResponse.redirect(new URL("/login", request.url));
+        : NextResponse.redirect(new URL("/login-admin", request.url));
     response.cookies.delete(REFRESH_COOKIE);
     return response;
   }
@@ -94,10 +94,10 @@ export async function proxy(request: NextRequest) {
   const hasSession = Boolean(accessToken);
 
   if (!hasSession && pathname.startsWith("/dashboard")) {
-    return NextResponse.redirect(new URL("/login", request.url));
+    return NextResponse.redirect(new URL("/login-admin", request.url));
   }
 
-  if (hasSession && pathname === "/login") {
+  if (hasSession && pathname === "/login-admin") {
     return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
@@ -105,7 +105,8 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // `/attendance` is deliberately absent — the public form must be reachable
-  // with or without a session, and must never redirect a student to a login.
-  matcher: ["/dashboard/:path*", "/login"],
+  // `/` is deliberately absent — the homepage is the public attendance form and
+  // must be reachable with or without a session, never redirecting a student to
+  // a login.
+  matcher: ["/dashboard/:path*", "/login-admin"],
 };

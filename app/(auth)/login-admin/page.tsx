@@ -4,6 +4,9 @@ import { LoginForm } from "./login-form";
 
 export const metadata: Metadata = {
   title: "Sign in",
+  // The admin entry point is unlisted by design; keeping it out of search
+  // indexes is the other half of that.
+  robots: { index: false, follow: false },
 };
 
 export default function LoginPage() {
@@ -20,17 +23,6 @@ export default function LoginPage() {
         </div>
 
         <LoginForm />
-
-        <p className="text-muted-foreground text-center text-xs">
-          Students don&rsquo;t sign in. Attendance is submitted from the{" "}
-          <a
-            className="underline underline-offset-4 hover:text-foreground"
-            href="/attendance"
-          >
-            attendance form
-          </a>
-          .
-        </p>
       </div>
     </main>
   );

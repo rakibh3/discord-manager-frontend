@@ -4,6 +4,10 @@ import Link from "next/link";
 import { Suspense } from "react";
 
 import { OutcomeChart } from "./reminders/outcome-chart";
+import {
+  DAILY_STATUS_COLOR,
+  DAILY_STATUS_LABEL,
+} from "./status/status-labels";
 import { CHART_COLORS } from "@/components/viz/chart-tokens";
 import { CompositionChart } from "@/components/viz/composition-chart";
 import { Button } from "@/components/ui/button";
@@ -16,9 +20,11 @@ import {
 } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyTitle } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
+import { getDailyStatusCounts } from "@/lib/api/endpoints/daily-status";
 import { getSyncStatus } from "@/lib/api/endpoints/discord";
 import { getHistory } from "@/lib/api/endpoints/reminders";
-import { formatDhaka } from "@/lib/dhaka-date";
+import type { DailyStatusCounts } from "@/lib/api/types";
+import { dhakaToday, formatCivilDate, formatDhaka } from "@/lib/dhaka-date";
 import { DAILY_STATUS_ENABLED } from "@/lib/flags";
 
 export const metadata: Metadata = { title: "Overview" };
@@ -26,11 +32,10 @@ export const metadata: Metadata = { title: "Overview" };
 /**
  * The overview.
  *
- * Charts here are built **only** from data the backend actually exposes today —
- * member directory composition and reminder broadcast outcomes. The PRD's
- * attendance-versus-update figures belong to the daily-status feature, which
- * has no HTTP surface; while that is off, this page shows a pointer to the
- * Status page rather than a plausible-looking placeholder metric.
+ * Charts here are built from live backend endpoints:
+ * - Member directory composition (`GET /api/discord/sync/status`)
+ * - Today's daily completion breakdown (`GET /api/daily-status/counts`)
+ * - Recent reminder broadcast outcomes (`GET /api/reminders`)
  */
 async function MemberComposition() {
   const { members, lastSync } = await getSyncStatus();
@@ -63,6 +68,92 @@ async function MemberComposition() {
             },
           ]}
         />
+      </CardContent>
+    </Card>
+  );
+}
+
+async function DailyCompletion() {
+  const today = dhakaToday();
+  let counts: DailyStatusCounts | null = null;
+  try {
+    counts = await getDailyStatusCounts(today);
+  } catch {
+    counts = null;
+  }
+
+  if (!counts) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Today's completion</CardTitle>
+          <CardDescription>
+            {formatCivilDate(today)} (Asia/Dhaka)
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <Empty>
+            <EmptyTitle>No data for today yet</EmptyTitle>
+            <EmptyDescription>
+              Check the daily analytics page for full breakdown.
+            </EmptyDescription>
+          </Empty>
+          <Button variant="outline" size="sm" className="self-start" asChild>
+            <Link href="/dashboard/status">
+              View daily analytics
+              <ArrowRight data-icon="inline-end" />
+            </Link>
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const total = counts.totalMembers;
+  const pct = total > 0 ? Math.round((counts.bothComplete / total) * 100) : 0;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Today's completion</CardTitle>
+        <CardDescription>
+          {formatCivilDate(today)} (Asia/Dhaka) &middot; {pct}% both complete
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <CompositionChart
+          total={total}
+          totalLabel="Members"
+          emptyMessage="No members on record for today."
+          slices={[
+            {
+              label: DAILY_STATUS_LABEL.COMPLETE,
+              value: counts.bothComplete,
+              color: DAILY_STATUS_COLOR.COMPLETE,
+            },
+            {
+              label: DAILY_STATUS_LABEL.MISSING_UPDATE,
+              value: counts.missingUpdateOnly,
+              color: DAILY_STATUS_COLOR.MISSING_UPDATE,
+            },
+            {
+              label: DAILY_STATUS_LABEL.MISSING_ATTENDANCE,
+              value: counts.missingAttendanceOnly,
+              color: DAILY_STATUS_COLOR.MISSING_ATTENDANCE,
+            },
+            {
+              label: DAILY_STATUS_LABEL.MISSING_BOTH,
+              value: counts.missingBoth,
+              color: DAILY_STATUS_COLOR.MISSING_BOTH,
+            },
+          ]}
+        />
+        <Button variant="outline" size="sm" className="self-start" asChild>
+          <Link href="/dashboard/status">
+            View daily analytics
+            <ArrowRight data-icon="inline-end" />
+          </Link>
+        </Button>
       </CardContent>
     </Card>
   );
@@ -107,7 +198,7 @@ export default function OverviewPage() {
       <div className="flex flex-col gap-1">
         <h1 className="text-xl font-semibold tracking-tight">Overview</h1>
         <p className="text-muted-foreground text-sm">
-          System health and the data that exists today.
+          Live system health and operational metrics.
         </p>
       </div>
 
@@ -120,26 +211,25 @@ export default function OverviewPage() {
           <Card>
             <CardHeader>
               <CardTitle>Daily completion</CardTitle>
-              <CardDescription>
-                Not available yet.
-              </CardDescription>
+              <CardDescription>Not enabled.</CardDescription>
             </CardHeader>
             <CardContent>
-              {/* No figure of any kind here — see app/(dashboard)/dashboard/status/unavailable.tsx. */}
               <p className="text-muted-foreground text-sm">
-                Attendance-versus-update completion needs backend endpoints that
-                do not exist yet, so no figure is shown rather than a placeholder
-                one.
+                Daily status metrics are currently disabled.
               </p>
               <Button variant="outline" size="sm" className="mt-3" asChild>
                 <Link href="/dashboard/status">
-                  What this will show
+                  Go to status page
                   <ArrowRight data-icon="inline-end" />
                 </Link>
               </Button>
             </CardContent>
           </Card>
-        ) : null}
+        ) : (
+          <Suspense fallback={<Skeleton className="h-64" />}>
+            <DailyCompletion />
+          </Suspense>
+        )}
       </div>
 
       <Suspense fallback={<Skeleton className="h-80" />}>

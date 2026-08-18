@@ -162,6 +162,194 @@ export type SchedulePatch = {
   enabled?: boolean;
 };
 
+// ── Attendance announcement ──────────────────────────────────────────────────
+
+/**
+ * The only tokens a template body may contain. The backend rejects anything
+ * else with a 400 that names the offender — left in the text an unknown
+ * placeholder would reach ~5,000 students as literal characters.
+ */
+export type AnnouncementPlaceholder =
+  | "{{date}}"
+  | "{{close_time}}"
+  | "{{daily_update_channel_id}}"
+  | "{{attendance_form_link}}"
+  | "{{termination_day}}";
+
+export type ResolvedMentions = {
+  roleIds: string[];
+  userIds: string[];
+  /** Entries that no longer resolve, as `role:<id>` / `user:<handle>`. */
+  unresolved: string[];
+};
+
+export type AnnouncementAttemptStatus = "SENDING" | "POSTED" | "FAILED";
+
+export type AnnouncementAttempt = {
+  attempt: number;
+  /** Stuck on `SENDING` means a crash between the day-claim and the post. */
+  status: AnnouncementAttemptStatus;
+  trigger: "SCHEDULED" | "MANUAL";
+  discordMessageId: string | null;
+  unresolvedTargets: string[];
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AnnouncementDispatchResult =
+  | {
+      status: "posted";
+      announcementDate: string;
+      attempt: number;
+      messageId: string;
+      unresolvedTargets: string[];
+    }
+  | {
+      status: "already-sent";
+      announcementDate: string;
+      attempt: number;
+      postedAt: string;
+    }
+  | { status: "disabled" }
+  | {
+      status: "failed";
+      announcementDate: string;
+      error: string;
+      missingPermission: boolean;
+      notConnected: boolean;
+    };
+
+export type AnnouncementPayload = {
+  template: {
+    /**
+     * The **raw** body, placeholders unexpanded. This is what an editor binds
+     * to — round-tripping `preview.content` back through a save would bake
+     * today's date permanently into the stored template.
+     */
+    body: string;
+    terminationDays: number;
+    /**
+     * Pings the entire guild every evening until turned off. The only way the
+     * announcement can notify everyone: a literal `@everyone` typed into the
+     * body is inert, because `allowedMentions` is built from this allowlist
+     * alone and never parsed out of the text.
+     */
+    mentionEveryone: boolean;
+    mentionRoleIds: string[];
+    mentionUsernames: string[];
+    updatedAt: string;
+    updatedBy: { id: string; name: string; email: string } | null;
+  };
+  schedule: {
+    /** `HH:mm` wall clock, Asia/Dhaka. */
+    announceTime: string;
+    /** 0 = Sunday … 6 = Saturday. */
+    daysOfWeek: number[];
+    enabled: boolean;
+    /** Reported back to us, never sent — Zod strips it silently. */
+    timezone: "Asia/Dhaka";
+  };
+  preview: {
+    /** Exactly what would be posted right now, mention line included. */
+    content: string;
+    length: number;
+    limit: 2000;
+    /** Read from the `#daily-update` schedule, not stored on the template. */
+    closeTime: string;
+    mentions: ResolvedMentions;
+  };
+  supportedPlaceholders: AnnouncementPlaceholder[];
+  scheduler: {
+    /** `SCHEDULER_ENABLED` on the serving process. Manual send still works. */
+    processEnabled: boolean;
+    running: boolean;
+    nextRunAt: string | null;
+    /** Where a missing `Send Messages` permission first becomes visible. */
+    lastOutcome: {
+      ranAt: string;
+      trigger: "SCHEDULED" | "MANUAL";
+      result: AnnouncementDispatchResult;
+    } | null;
+  };
+  channel: { id: string | null };
+  today: {
+    /** `YYYY-MM-DD`, Dhaka. */
+    date: string;
+    posted: boolean;
+    attempts: AnnouncementAttempt[];
+  };
+};
+
+export type AnnouncementPreview = {
+  content: string;
+  length: number;
+  limit: 2000;
+  withinLimit: boolean;
+  closeTime: string;
+  mentions: ResolvedMentions;
+  supportedPlaceholders: AnnouncementPlaceholder[];
+};
+
+export type AnnouncementSendResult = {
+  announcementDate: string;
+  attempt: number;
+  discordMessageId: string;
+  unresolvedTargets: string[];
+  channelId: string | null;
+};
+
+/** A patch body. Every field optional, but an empty object is rejected (400). */
+export type AnnouncementPatch = {
+  body?: string;
+  terminationDays?: number;
+  mentionEveryone?: boolean;
+  mentionRoleIds?: string[];
+  mentionUsernames?: string[];
+  announceTime?: string;
+  daysOfWeek?: number[];
+  enabled?: boolean;
+};
+
+/** Body for `POST /announcement/attendance/preview`. Both fields optional. */
+export type AnnouncementPreviewRequest = {
+  body?: string;
+  terminationDays?: number;
+};
+
+// ── Attendance window (public — see `lib/attendance-window.ts`) ───────────────
+
+/**
+ * ⚠️ Not reachable over HTTP yet. See `BACKEND_REQUIREMENTS.md` §2.
+ *
+ * The window governing when the public attendance form accepts submissions is
+ * the `#daily-update` schedule, which today is readable only from the
+ * **admin-only** `GET /api/schedule/daily-update`. Students have no credential,
+ * so the homepage needs a public projection of the same row.
+ *
+ * `getAttendanceWindow()` fails **open** while the route is absent: the form
+ * renders exactly as it does now, so shipping this ahead of the backend changes
+ * nothing, and the gate switches itself on the moment the route appears.
+ */
+export type AttendanceWindow = {
+  /** Whether the window is open *right now*, per the schedule. */
+  isOpen: boolean;
+  /** Today's Dhaka civil date, `YYYY-MM-DD`. */
+  date: string;
+  /** `HH:mm` wall clock, Asia/Dhaka. */
+  openTime: string;
+  closeTime: string;
+  /** 0 = Sunday … 6 = Saturday. */
+  daysOfWeek: number[];
+  /** `false` means the schedule is paused — the window never opens. */
+  enabled: boolean;
+  timezone: "Asia/Dhaka";
+  /** Instant the window next opens; `null` when the schedule is disabled. */
+  nextOpenAt: string | null;
+  /** Instant the current window closes; `null` when it is not open. */
+  closesAt: string | null;
+};
+
 // ── Reminders ────────────────────────────────────────────────────────────────
 
 export type ReminderStatus =
@@ -308,21 +496,15 @@ export type SubmitAttendancePayload = {
   member: VerifiedMember;
 };
 
-// ── Daily status (contract only — see `lib/flags.ts`) ─────────────────────────
+export type AttendanceSubmitInput = {
+  name: string;
+  phone: string;
+  email: string;
+  discordUsername: string;
+};
 
-/**
- * ⚠️ Nothing below is reachable over HTTP today.
- *
- * `API_INTEGRATION.md` §13 records that `getDailyStatusPage()` and
- * `getDailyStatusCounts()` are written and tested in the backend's repository
- * layer but exposed by **no route** — any request would answer `API Not
- * Found!`. These types are written to the documented contract so the feature is
- * genuinely ready to switch on, and every call site is guarded by
- * `DAILY_STATUS_ENABLED` so none of them can fire while that is off.
- *
- * If the eventual endpoints differ, the rework is bounded to this block and
- * `lib/api/endpoints/daily-status.ts`.
- */
+// ── Daily status (API_INTEGRATION.md §8.8) ───────────────────────────────────
+
 export type DailyStatus =
   | "COMPLETE"
   | "MISSING_UPDATE"
@@ -344,10 +526,13 @@ export type DailyStatusMember = {
   attendanceSubmittedAt: string | null;
 };
 
+/** Alias for DailyStatusMember matching API_INTEGRATION.md naming */
+export type DailyStatusRow = DailyStatusMember;
+
 /**
  * The seven overview figures. They interlock and must agree, so they come from
- * this one endpoint only — assembling any of them from the reminder targets
- * list would produce numbers that quietly contradict each other.
+ * this one endpoint only (`GET /api/daily-status/counts`).
+ * Invariant: `bothComplete + missingUpdateOnly + missingAttendanceOnly + missingBoth === totalMembers`.
  */
 export type DailyStatusCounts = {
   date: string;
@@ -370,6 +555,9 @@ export type DailyStatusMemberDetail = DailyStatusMember & {
   messages: DailyStatusMessage[];
 };
 
+/** Alias for DailyStatusMemberDetail matching API_INTEGRATION.md naming */
+export type MemberDailyStatus = DailyStatusMemberDetail;
+
 export type DailyStatusQuery = {
   date: string;
   page?: number;
@@ -377,3 +565,6 @@ export type DailyStatusQuery = {
   status?: DailyStatus;
   search?: string;
 };
+
+/** Alias for AttendanceWindow matching API_INTEGRATION.md naming */
+export type AttendanceWindowPayload = AttendanceWindow;

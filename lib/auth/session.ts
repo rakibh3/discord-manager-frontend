@@ -42,7 +42,7 @@ const cookieOptions = () =>
 /**
  * ⚠️ Only callable from a Server Action or a Route Handler. `cookies().set()`
  * throws during a Server Component render; `lib/api/client.ts` catches that and
- * redirects to `/login` rather than letting it surface.
+ * redirects to `/login-admin` rather than letting it surface.
  */
 export async function writeSession({
   accessToken,
@@ -88,7 +88,7 @@ export async function readSession(): Promise<{
 export const requireSession = cache(
   async (): Promise<{ accessToken: string; refreshToken: string | null }> => {
     const session = await readSession();
-    if (!session.accessToken) redirect("/login");
+    if (!session.accessToken) redirect("/login-admin");
     return {
       accessToken: session.accessToken,
       refreshToken: session.refreshToken,

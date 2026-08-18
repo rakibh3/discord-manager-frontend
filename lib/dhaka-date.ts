@@ -50,16 +50,70 @@ export function isFutureDhakaDate(date: string): boolean {
   return date > dhakaToday();
 }
 
+const weekdayFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: DHAKA_TIMEZONE,
+  weekday: "short",
+});
+
+const WEEKDAY_INDEX: Record<string, number> = {
+  Sun: 0,
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6,
+};
+
+/**
+ * Today's Dhaka weekday as `0 = Sunday … 6 = Saturday`, matching the backend's
+ * `daysOfWeek`.
+ *
+ * `Date.getDay()` would answer for the *viewer's* zone, so an admin in London
+ * at 20:00 on a Friday would be told it is Friday in Dhaka when it is already
+ * Saturday there — and the schedule would read as active on the wrong day.
+ */
+export function dhakaWeekday(instant: Date = new Date()): number {
+  return WEEKDAY_INDEX[weekdayFormatter.format(instant)] ?? 0;
+}
+
+const wallClockFormatter = new Intl.DateTimeFormat("en-GB", {
+  timeZone: DHAKA_TIMEZONE,
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+/** The current Dhaka wall clock as zero-padded `HH:mm`, comparable as a string. */
+export function dhakaTimeNow(instant: Date = new Date()): string {
+  // `en-GB` with hour12:false renders 24-hour and zero-pads, so the result
+  // sorts correctly against a stored `openTime`/`closeTime`.
+  return wallClockFormatter.format(instant);
+}
+
+/**
+ * Everything a human *reads* is 12-hour, because that is how the students and
+ * admins say these times out loud ("সন্ধ্যা ৭টা", not "nineteen hundred").
+ *
+ * The 24-hour rendering survives only in `dhakaTimeNow` above and in the wire
+ * format itself, where the string is compared rather than read.
+ */
 const dateTimeFormatter = new Intl.DateTimeFormat("en-GB", {
   timeZone: DHAKA_TIMEZONE,
   dateStyle: "medium",
   timeStyle: "short",
+  hour12: true,
 });
 
 const timeOnlyFormatter = new Intl.DateTimeFormat("en-GB", {
   timeZone: DHAKA_TIMEZONE,
   timeStyle: "short",
+  hour12: true,
 });
+
+/** `en-GB` renders the meridiem lowercase; the UI uses `7:00 PM` throughout. */
+const upperMeridiem = (formatted: string): string =>
+  formatted.replace(/\b(am|pm)\b/i, (period) => period.toUpperCase());
 
 const dateOnlyFormatter = new Intl.DateTimeFormat("en-GB", {
   timeZone: DHAKA_TIMEZONE,
@@ -88,7 +142,29 @@ export function formatDhaka(
         ? dateOnlyFormatter
         : dateTimeFormatter;
 
-  return `${formatter.format(instant)} (Dhaka)`;
+  return `${upperMeridiem(formatter.format(instant))} (Dhaka)`;
+}
+
+const WALL_CLOCK_PATTERN = /^(\d{1,2}):(\d{2})$/;
+
+/**
+ * Renders a stored `HH:mm` wall-clock string as `7:00 PM`.
+ *
+ * `openTime` and `closeTime` arrive as 24-hour strings because that is what
+ * sorts correctly against `dhakaTimeNow()` — but nobody reads a schedule that
+ * way, so every *display* of one goes through here. Anything that is not a
+ * well-formed `HH:mm` is passed through untouched rather than mangled: a
+ * surprising backend value should read as itself, not as `NaN:00 PM`.
+ */
+export function formatWallClock(time: string): string {
+  const match = WALL_CLOCK_PATTERN.exec(time);
+  if (!match) return time;
+
+  const hours = Number(match[1]);
+  const minutes = match[2];
+  if (hours > 23 || Number(minutes) > 59) return time;
+
+  return `${hours % 12 || 12}:${minutes} ${hours < 12 ? "AM" : "PM"}`;
 }
 
 /** Formats a `YYYY-MM-DD` civil date for display without inventing a time. */
