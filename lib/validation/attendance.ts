@@ -46,6 +46,9 @@ export const attendanceSchema = z.object({
       error:
         "Use the name under the @ on your Discord profile — 2 to 32 characters, lowercase letters, digits, _ or . only, and no two dots in a row.",
     }),
+  /** When a student's Discord pairing does not match the on-file record, ticking
+   *  this lets them submit anyway and queues a mismatch report for review. */
+  cannotEnterRealDiscordUsername: z.boolean().optional(),
 });
 
 export type AttendanceInput = z.input<typeof attendanceSchema>;

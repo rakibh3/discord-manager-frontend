@@ -40,7 +40,17 @@ export const getSyncStatus = cache((): Promise<DiscordSyncStatus> =>
 );
 
 /** `POST /api/discord/sync` — answers 202 before any work, so poll the status
- *  endpoint until `lastSync.running` is false. 409 means one is already running. */
-export function triggerSync(): Promise<SyncTriggerResult> {
-  return api<SyncTriggerResult>("/discord/sync", { method: "POST" });
+ *  endpoint until `lastSync.running` is false. 409 means one is already running.
+ *
+ *  An omitted `guildId` syncs every configured server, which is the ordinary
+ *  case. A named `guildId` narrows the sync to one server — useful when a
+ *  single server's directory needs repairing without paying for a full
+ *  multi-thousand-member fetch of the others. The ID must be a 17–20 digit
+ *  Discord snowflake, and it must be one of the configured servers — an
+ *  unknown ID is a 400 naming it. */
+export function triggerSync(guildId?: string): Promise<SyncTriggerResult> {
+  return api<SyncTriggerResult>("/discord/sync", {
+    method: "POST",
+    body: guildId ? { guildId } : {},
+  });
 }

@@ -688,8 +688,10 @@ export type SubmitAttendancePayload = {
   submittedAt: string;
   member: VerifiedMember;
   /** One row is written per server, in a single transaction. The student
-   *  submits once; the form never asks them to pick a server. */
-  servers?: (ServerRef & { recorded: boolean })[];
+   *  submits once; the form never asks them to pick a server. Each entry
+   *  carries `recorded` (was written by this request) and `alreadySubmitted`
+   *  (was already on file from an earlier submission). */
+  servers?: (ServerRef & { recorded: boolean; alreadySubmitted: boolean })[];
 };
 
 export type AttendanceSubmitInput = {
@@ -697,6 +699,10 @@ export type AttendanceSubmitInput = {
   phone: string;
   email: string;
   discordUsername: string;
+  /** When `true`, the backend accepts a Discord handle that does not match the
+   *  pairing on file for this email and queues a mismatch report for an admin
+   *  to review. The byte-for-byte response is the same as a normal submit. */
+  cannotEnterRealDiscordUsername?: boolean;
 };
 
 // ── Daily status (API_INTEGRATION.md §8.8, §5A) ──────────────────────────────
@@ -1127,4 +1133,67 @@ export function isRosterRangeCounts(
 ): payload is RosterStatusRangeCountsPayload {
   return payload.meta.mode === "range";
 }
+
+// ── Discord pairing mismatch reports (§8.6B) ───────────────────────────────
+
+export type DiscordMismatchReportStatus = "open" | "reassigned" | "dismissed";
+
+/** One row from `GET /api/roster/discord-mismatch-reports`. Paired /
+ *  submitting account snowflakes are never exposed — only the normalized
+ *  handles, so the dashboard can render "this Discord username was filed
+ *  against this pairing" without leaking account ids to a wider surface
+ *  than necessary. */
+export type DiscordMismatchReport = {
+  id: string;
+  entryId: string;
+  entryName: string;
+  entryEmail: string;
+  pairedDiscordUsername: string;
+  pairedDisplayName: string | null;
+  submittingDiscordUsername: string;
+  submittingDisplayName: string | null;
+  submittedHandle: string;
+  reason: "HANDLE_MISMATCH_PAIRING";
+  /** ISO date (YYYY-MM-DD) of the Dhaka day the report was filed for. */
+  submissionDhakaDate: string;
+  reportedAt: string;
+  status: DiscordMismatchReportStatus;
+};
+
+/** Listing wraps the items + a `total` mirror of `meta.total`, so the
+ *  client never has to look in two places. */
+export type DiscordMismatchReportList = {
+  items: DiscordMismatchReport[];
+  total: number;
+};
+
+export type DiscordMismatchReportQuery = {
+  status?: DiscordMismatchReportStatus;
+  search?: string;
+  /** Inclusive lower bound on `reportedAt`, ISO 8601. */
+  dateFrom?: string;
+  /** Inclusive upper bound on `reportedAt`, ISO 8601. */
+  dateTo?: string;
+  page?: number;
+  limit?: number;
+};
+
+/** `POST /api/roster/discord-mismatch-reports/:id/action` accepts exactly
+ *  one of these — anything else (or extra body fields) is a 400. */
+export type DiscordMismatchReportAction = "reassign" | "dismiss";
+
+export type DiscordMismatchReportActionInput = {
+  action: DiscordMismatchReportAction;
+};
+
+/** The 200 body carries the post-action status. `rosterEntryId` is echoed
+ *  back so the dashboard can refresh the pairing column without an extra
+ *  roster fetch. */
+export type DiscordMismatchReportActionResult = {
+  id: string;
+  status: Exclude<DiscordMismatchReportStatus, "open">;
+  reviewedByAdminId: string;
+  reviewedAt: string;
+  rosterEntryId: string;
+};
 

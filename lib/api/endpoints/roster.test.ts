@@ -299,4 +299,26 @@ describe("roster endpoints", () => {
     expect(calls[0].url).toBe("http://backend.test/api/roster/settings");
     expect(calls[0].method).toBe("PATCH");
   });
+
+  test("rosterStatusExportPath forwards daysOfWeek when set", async () => {
+    const { rosterStatusExportPath } = await import("@/lib/api/endpoints/roster");
+
+    const path = rosterStatusExportPath(
+      { mode: "range", from: "2026-08-15", to: "2026-08-17", daysOfWeek: [] },
+      { daysOfWeek: [0, 1, 2], format: "csv" },
+    );
+
+    expect(path).toContain("daysOfWeek=0%2C1%2C2");
+  });
+
+  test("rosterStatusExportPath omits daysOfWeek when not provided", async () => {
+    const { rosterStatusExportPath } = await import("@/lib/api/endpoints/roster");
+
+    const path = rosterStatusExportPath(
+      { mode: "range", from: "2026-08-15", to: "2026-08-17", daysOfWeek: [] },
+      { format: "csv" },
+    );
+
+    expect(path).not.toContain("daysOfWeek");
+  });
 });

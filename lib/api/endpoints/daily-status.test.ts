@@ -223,4 +223,22 @@ describe("daily-status endpoints", () => {
       "/daily-status/export?from=2026-08-15&to=2026-08-17&format=csv&guildId=146&rangeStatus=NONE",
     );
   });
+
+  test("dailyStatusExportPath forwards options.daysOfWeek when set", () => {
+    const path = dailyStatusExportPath(
+      { mode: "range", from: "2026-08-15", to: "2026-08-17", daysOfWeek: [] },
+      { daysOfWeek: [0, 1, 2], format: "csv" },
+    );
+
+    expect(path).toContain("daysOfWeek=0%2C1%2C2");
+  });
+
+  test("dailyStatusExportPath omits daysOfWeek when option is empty", () => {
+    const path = dailyStatusExportPath(
+      { mode: "range", from: "2026-08-15", to: "2026-08-17", daysOfWeek: [] },
+      { format: "csv" },
+    );
+
+    expect(path).not.toContain("daysOfWeek");
+  });
 });

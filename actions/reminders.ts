@@ -154,6 +154,10 @@ export async function sendBroadcast(
   }
 
   revalidatePath("/dashboard/reminders");
+  // The dashboard's `RecentBroadcasts` tile reads `getHistory` — without
+  // revalidating the root, that tile would still show the pre-queue history
+  // until a hard refresh.
+  revalidatePath("/dashboard");
   redirect(`/dashboard/reminders/${queuedId}`);
 }
 
@@ -168,6 +172,9 @@ export async function cancelBroadcast(id: string): Promise<CancelResult> {
     const progress = await cancelReminder(id);
     revalidatePath(`/dashboard/reminders/${id}`);
     revalidatePath("/dashboard/reminders");
+    // Same reasoning as `sendBroadcast`: a cancel flips a row's status, and
+    // the overview's `RecentBroadcasts` tile renders that status.
+    revalidatePath("/dashboard");
     return { ok: true, progress };
   } catch (error) {
     if (!(error instanceof ApiError)) throw error;

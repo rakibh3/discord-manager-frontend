@@ -1,4 +1,5 @@
 import {
+  AlertTriangle,
   BarChart3,
   CalendarClock,
   GraduationCap,
@@ -33,6 +34,11 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/dashboard/status", label: "Daily Analytics", icon: BarChart3, exact: true },
   { href: "/dashboard/members", label: "Member Status", icon: Users },
   { href: "/dashboard/roster", label: "Roster", icon: GraduationCap },
+  {
+    href: "/dashboard/mismatch-reports",
+    label: "Reports",
+    icon: AlertTriangle,
+  },
   {
     href: "/dashboard/roster/status",
     label: "Roster Engagement",

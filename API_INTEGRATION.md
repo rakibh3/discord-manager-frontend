@@ -2341,12 +2341,12 @@ A malformed handle is a **400** (Zod). The form must tell "fix your typing" (400
   }
 }
 
-// gate is OFF — every well-formed address passes
+// gate is OFF — no check is performed, so `verified` is deliberately false
 {
   "success": true, "statusCode": 200,
-  "message": "Email accepted",
+  "message": "Roster check is currently disabled by an admin; no enrolment check was performed.",
   "data": {
-    "verified": true,
+    "verified": false,
     "attendanceDate": "2026-08-17",
     "emailVerificationRequired": false,
   }
@@ -2356,21 +2356,22 @@ A malformed handle is a **400** (Zod). The form must tell "fix your typing" (400
 - The endpoint is the email-side mirror of `/verify-user`: same envelope shape, same "always 200" rule, same live-badge use on the form. Wire them with the same `data.verified` branch.
 - **The address is normalized (trim + lowercase) before lookup**, the same way `POST /submit` normalizes it, so a student pasting from a chat message that picked up trailing whitespace still resolves.
 - **A deactivated/removed entry answers identically to one that was never on the roll** (`verified: false`, no other distinction). Same disclosure concern: telling those two apart would let anyone who can type an address confirm that a particular person used to be enrolled. Never show a "did you mean…" suggestion here; the API sends none.
-- **When the gate is OFF** the endpoint reports `verified: true` for every well-formed address and `emailVerificationRequired: false`. The form should not nag about a check that is not happening — read `emailVerificationRequired` and only render the badge when it is `true`.
+- **When the gate is OFF** the endpoint reports `verified: false` and `emailVerificationRequired: false` for every well-formed address. There is no check to pass, so `verified` is deliberately `false` (reporting `true` would read as "this address is enrolled" for a check that never ran). The form should not nag about a check that is not happening — read `emailVerificationRequired` and only render the badge when it is `true`. Submit also bypasses the gate in this state, so the answer is consistent across read-time and write-time.
 - The gate's current state also lives on `/window` (`data.emailVerificationRequired`). The two should always agree, since both read the same `roster_settings` row.
 
 **Branch on `data.verified`, never on the HTTP status.** A malformed email is a **400** (Zod) — same rule as `/verify-user`: tell "fix your typing" (400) apart from "use the email you enrolled with" (200 + `verified: false`).
 
 #### 🔓 `POST /api/attendance/submit`
 
-**Body** — exactly these four fields; anything else is stripped.
+**Body** — exactly these fields; anything else is stripped.
 
-| Field             | Type   | Rules                                                                                       |
-| ----------------- | ------ | ------------------------------------------------------------------------------------------- |
-| `name`            | string | trimmed, 3–100 chars, `^[\p{L}\s]+$` — **Unicode letters**, so Bengali names are accepted   |
-| `phone`           | string | trimmed, `^(?:\+?880\|0)1[3-9]\d{8}$` — `01711000000`, `+8801711000000`, or `8801711000000` |
-| `email`           | string | valid email                                                                                 |
-| `discordUsername` | string | same rule as `verify-user`                                                                  |
+| Field                            | Type    | Rules                                                                                       |
+| -------------------------------- | ------- | ------------------------------------------------------------------------------------------- |
+| `name`                           | string  | trimmed, 3–100 chars, `^[\p{L}\s]+$` — **Unicode letters**, so Bengali names are accepted   |
+| `phone`                          | string  | trimmed, `^(?:\+?880\|0)1[3-9]\d{8}$` — `01711000000`, `+8801711000000`, or `8801711000000` |
+| `email`                          | string  | valid email                                                                                 |
+| `discordUsername`                | string  | same rule as `verify-user`                                                                  |
+| `cannotEnterRealDiscordUsername` | boolean | optional; see "Discord-pairing mismatch" below                                              |
 
 **201**
 
@@ -2399,17 +2400,18 @@ A malformed handle is a **400** (Zod). The form must tell "fix your typing" (400
 
 The submission is recorded in **every** configured server the handle belongs to, in one transaction. The student submits once; the form does not ask them to pick a server. Each entry in `servers[]` carries `recorded` (was written by this request) and `alreadySubmitted` (was already on file from an earlier submission).
 
-| Status  | Cause                                           | Notes                                                                                        |
-| ------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| 400     | Zod                                             | field-level; map `errorDetails.issues` to inputs                                             |
-| **403** | email not on the enrolled student list          | only when `emailVerificationRequired` is `true`. Point the student at the **email** field    |
-| **404** | handle unknown or the member has left the guild | on the **write** path not-found is a genuine failure, unlike `verify-user`                   |
-| 409     | already submitted today                         | message names the date: `You have already submitted your attendance for today (2026-08-17).` |
-| 429     | rate limit                                      | 5 per 15 min per IP                                                                          |
+| Status  | Cause                                                                                  | Notes                                                                                        |
+| ------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| 400     | Zod                                                                                    | field-level; map `errorDetails.issues` to inputs                                             |
+| **403** | email not on the enrolled student list                                                 | only when `emailVerificationRequired` is `true`. Point the student at the **email** field    |
+| **403** | submitted handle does not match the recorded pairing                                  | see "Discord-pairing mismatch" below                                                         |
+| **404** | handle unknown or the member has left the guild                                        | on the **write** path not-found is a genuine failure, unlike `verify-user`                   |
+| 409     | already submitted today                                                                | message names the date: `You have already submitted your attendance for today (2026-08-17).` |
+| 429     | rate limit                                                                             | 5 per 15 min per IP                                                                          |
 
 The 409 is enforced by a database unique constraint (`(memberId, attendanceDate)`), not a read-then-write check — two simultaneous submissions still produce exactly one row.
 
-**403 and 404 are different fields.** A 403 means the _email address_ is not on the enrolment roster; a 404 means the _Discord handle_ is in no configured server. Branching on the status is the only way to tell the student which input to fix — do not collapse them into one "could not verify you" message.
+**403 (enrolled) and 403 (mismatch) are different fields.** A 403 with `emailVerificationRequired` set means the _email address_ is not on the enrolment roster; a 403 with the new "handle does not match the paired account" message means the _Discord handle_ does not match the one already recorded against that email. Branching on the message text (and not just the status) is what lets the form tell the student which input to fix.
 
 The two checks are **independent**: the roster stores no Discord handle, and the matched entry does not have to describe the same person as the Discord account. What an accepted submission asserts is that an enrolled person's address was supplied _and_ that the submitting account is in a server — not that this particular enrolled person submitted.
 
@@ -2418,6 +2420,22 @@ The roster check runs **first**, so a request failing both is told about the ema
 A refusal is deliberately identical whether the address was never enrolled or was removed from the roster — that collapse is what stops the endpoint being used to confirm who used to be enrolled. Never show a "did you mean…" suggestion here; the API sends none.
 
 When `emailVerificationRequired` is `false` (the default, and the state until an admin arms it) the roster is not consulted at all and `submit` behaves exactly as it did before the feature existed.
+
+**Discord-pairing mismatch.** Once a Discord pairing has been recorded for an email address, every later submission must use that handle. A submission with a different handle — but a valid one in a configured server — is refused with a 403 and this message:
+
+```
+This Discord username does not match the one already on file for your email address.
+Please enter the correct Discord username, or check the box below to record
+attendance with your current username and notify an administrator.
+```
+
+The form's "I cannot enter my real Discord username" checkbox maps to `cannotEnterRealDiscordUsername`. When set to `true` on a refused submission, the submission is accepted as today (attendance is recorded, response shape unchanged), and a discord-pairing-mismatch report is queued against the pairing for an administrator to review. The public response is **byte-for-byte the same** as it would have been without the flag — no paired-account identifier, no count of reports, no record that a report was created.
+
+- The flag is rejected as a 400 if it arrives as anything other than a JSON boolean (string, number, etc.).
+- The flag is ignored (treated as `false`) when the submitted handle resolves to no current guild member — the membership refusal still wins.
+- The flag is consumed only when the entry is paired and the handle differs. Unpaired entries are recorded as before.
+
+Listing and final-action endpoints for administrators live at `/api/roster/discord-mismatch-reports` (§8.6B).
 
 ---
 
@@ -2674,6 +2692,117 @@ CSV attachment with the same query surface as the listing (minus paging — the 
 | Status | Cause                       | Notes                                                                                |
 | ------ | --------------------------- | ------------------------------------------------------------------------------------ |
 | 501    | `format=xlsx`               | "XLSX export format is not supported yet. Please use format=csv." — same refusal the daily-status export uses |
+
+---
+
+### 8.6B Discord pairing mismatch reports — `/api/roster/discord-mismatch-reports`
+
+All routes 🔐 **ADMIN**. Reports of attendance submissions where the submitted handle did not match the recorded Discord pairing for the same email, filed when the student ticked the `cannotEnterRealDiscordUsername` flag on `POST /api/attendance/submit` (§8.6).
+
+The first report for an entry on a given Dhaka date is recorded; subsequent mismatched submissions on the same day are absorbed by the partial unique index on `(roster_entry_id, submission_dhaka_date)` filtered by `status = 'OPEN'` and do not create duplicate rows.
+
+Only one open report per entry per day can exist. Closing one (by `reassign` or `dismiss`) frees the entry for a fresh report the next day.
+
+#### 🔐 `GET /api/roster/discord-mismatch-reports`
+
+| Query      | Type     | Rules                                                                                              |
+| ---------- | -------- | -------------------------------------------------------------------------------------------------- |
+| `status`   | enum     | `open` (default), `reassigned`, or `dismissed`                                                     |
+| `search`   | string   | optional, case-insensitive partial match on the entry's **name or email**                          |
+| `dateFrom` | string   | optional, ISO 8601 datetime; inclusive lower bound of `reportedAt`                                 |
+| `dateTo`   | string   | optional, ISO 8601 datetime; inclusive upper bound of `reportedAt`                                 |
+| `page`     | number   | default `1`, ≥ 1                                                                                   |
+| `limit`    | number   | default `50`, 1–200                                                                                |
+
+`pairedAccountId` and `submittingAccountId` are **rejected** as 400 even when present — the listing must not let a caller enumerate Discord account snowflakes.
+
+**200**
+
+```jsonc
+{
+  "success": true,
+  "statusCode": 200,
+  "message": "Discord pairing mismatch reports retrieved successfully",
+  "meta": {
+    "page": 1,
+    "limit": 50,
+    "total": 12,
+    "status": "open",
+  },
+  "data": {
+    "items": [
+      {
+        "id": "…",
+        "entryId": "…",
+        "entryName": "Rakibul Hasan",
+        "entryEmail": "rakib@example.com",
+        "pairedDiscordUsername": "rakib_dev",
+        "pairedDisplayName": "Rakib",
+        "submittingDiscordUsername": "rakib_real",
+        "submittingDisplayName": "Rakib Real",
+        "submittedHandle": "rakib_real",
+        "reason": "HANDLE_MISMATCH_PAIRING",
+        "submissionDhakaDate": "2026-08-19",
+        "reportedAt": "2026-08-19T14:23:11.000Z",
+        "status": "open",
+      },
+    ],
+    "total": 12,
+  },
+}
+```
+
+Paired / submitting account identifiers are **never** exposed — only the normalized handles, so the dashboard can render "this Discord username was filed against this pairing" without leaking either account snowflake to a wider surface than necessary.
+
+| Status | Cause                              | Notes                                                                                                                            |
+| ------ | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| 400    | `pairedAccountId` filter supplied  | "The listing does not accept a paired-account filter — it would let callers enumerate Discord accounts"                           |
+| 400    | `submittingAccountId` filter supplied | same message, naming the rejected field                                                                                        |
+
+#### 🔐 `POST /api/roster/discord-mismatch-reports/:id/action`
+
+```jsonc
+{
+  "action": "reassign" // or "dismiss"
+}
+```
+
+Anything else in `action` (or anything else in the body) is a 400. The only two values are `reassign` and `dismiss`.
+
+**REASSIGN** rewrites the entry's pairing to the submitted account — but only if the entry still holds the originally paired account. A single conditional write (`WHERE id = :entryId AND discordUserId = :pairedAccountId`) preserves the invariant against a stale dashboard; if the entry's pairing has moved on, the update matches zero rows and the action is refused as a conflict. The report and the pairing rewrite are in one transaction; either both happen or neither does.
+
+REASSIGN also checks membership: reassigning to a Discord account that is no longer in any configured guild is refused with **422** — the entry would end up paired to nothing. The administrator can `dismiss` the report instead.
+
+**DISMISS** closes the report and leaves the pairing untouched. No membership check; the recorded pairing is the administrator's decision that the existing record is correct.
+
+Either action on a closed report is refused as a conflict with the current status.
+
+**200**
+
+```jsonc
+{
+  "success": true,
+  "statusCode": 200,
+  "message": "Report reassigned; the entry pairing has been updated",
+  "data": {
+    "id": "…",
+    "status": "reassigned",
+    "reviewedByAdminId": "…",
+    "reviewedAt": "2026-08-19T14:30:00.000Z",
+    "rosterEntryId": "…",
+  },
+}
+```
+
+| Status | Cause                                                | Notes                                                                                                                       |
+| ------ | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| 400    | unknown `action` value, or other fields in the body  | Zod field-level error                                                                                                       |
+| 404    | unknown report id                                    | "Mismatch report not found"                                                                                                 |
+| 409    | report already closed                                | message names the current status (`reassigned` or `dismissed`)                                                              |
+| 409    | entry no longer holds the originally paired account  | "The pairing on this entry has changed since the report was filed; refresh and review the current pairing before reassigning" — REASSIGN only |
+| 422    | submitted account is not in any configured guild     | REASSIGN only; the message names every configured guild. The report stays open — `dismiss` remains available.                |
+
+The action writes an audit-log entry with the action, the report id, the reviewing administrator, and the time.
 
 ---
 
@@ -3556,12 +3685,19 @@ export function EmailField() {
         if (!json.data?.verified) {
           // Show the backend's own message as the hint - that copy is what the
           // student will also see at submit time, so they learn the rule here.
+          // When the gate is OFF the backend also answers `verified: false`,
+          // with a "roster check is currently disabled" message, so this same
+          // branch renders the gate-off state without a ✅ badge.
           setBadge({ kind: 'unknown', message: json.message });
           return;
         }
-        // Gate is off: verified: true with emailVerificationRequired: false -
-        // the form should not nag about a check that isn't happening.
+        // `verified` is true here, which means the address IS on the roster
+        // AND the gate is currently armed. Render the verified badge.
         if (!json.data.emailVerificationRequired) {
+          // Unreachable with the current contract - `verified: true` requires
+          // the gate to be armed. Left as a defensive check; if the backend
+          // contract is ever relaxed again, this keeps the form from showing
+          // a ✅ on an unenrolled address.
           setBadge({ kind: 'notRequired' });
           return;
         }

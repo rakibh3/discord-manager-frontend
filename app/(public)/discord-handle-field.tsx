@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, CircleAlert, Info, Loader2 } from "lucide-react";
+import { CheckCircle2, CircleAlert, Loader2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -297,22 +297,49 @@ export function DiscordHandleField({
       ) : null}
 
       {/*
-        Guidance is visible from first render, before any error — students
-        overwhelmingly enter their Display Name instead of their username, and
-        an error message shown after the fact does not prevent that.
+        The format hint is only useful *before* the handle is verified —
+        once the badge says ✅, the student has already typed a valid format,
+        and re-displaying "this is your Username, not your Display Name"
+        wastes space and competes with the success message. The collapsible
+        stays available for the harder-case questions (where to find it /
+        pairing mismatch).
       */}
-      <FieldDescription id={guidanceId}>
-        <span className="flex items-start gap-2">
-          <Info aria-hidden className="mt-0.5 size-4 shrink-0" />
-          <span>
-            <strong>আপনার Discord Username কোথায় পাবেন:</strong> Discord অ্যাপের
-            নিচে বাম কোণায় আপনার প্রোফাইল ছবিতে ক্লিক করুন ➔ আপনার নামের নিচে{" "}
-            <code>@</code> চিহ্নের পরের ছোট হাতের নামটিই আপনার Discord Username
-            (যেমন <code>@rakib_dev</code> হলে শুধু <code>rakib_dev</code> লিখুন)।
-            এটি আপনার <em>Display Name</em> নয়।
-          </span>
-        </span>
-      </FieldDescription>
+      {badge.kind === "verified" ||
+      badge.kind === "duplicate" ? null : (
+        <>
+          {/*
+            The `<details>` element is block-level — it cannot legally live
+            inside a `<p>`. `FieldDescription` renders as `<p>`, so the static
+            guidance line stays in here as inline text, and the collapsible
+            sits as a sibling right after. Both share the same `guidanceId`
+            so `aria-describedby` on the input still points at one logical
+            description, and the input announces "the two answers you might
+            need" when it gets focus.
+          */}
+          <FieldDescription id={guidanceId}>
+            এটি আপনার <em>Display Name</em> নয় — Discord-এ <code>@</code> এর পরে
+            যে ছোট-হাতের নামটি আছে সেটি (<code>rakib_dev</code>-এর মতো)।
+          </FieldDescription>
+          <details className="text-muted-foreground/90 group">
+            <summary className="hover:text-foreground cursor-pointer list-none">
+              Username কোথায় পাবেন ও pairing mismatch হলে কী হবে
+            </summary>
+            <div className="mt-2 flex flex-col gap-2 pl-4">
+              <span>
+                <strong>Username কোথায় পাবেন:</strong> Discord অ্যাপের নিচে বাম
+                কোণায় আপনার প্রোফাইল ছবিতে ক্লিক করুন ➔ নামের নিচে{" "}
+                <code>@</code> এর পরের ছোট-হাতের নামটি।
+              </span>
+              <span>
+                <strong>Pairing mismatch:</strong> আপনার ইমেইলের সাথে আগে অন্য
+                একটি Username paired থাকলে জমা দিলে ৪০৩ আসবে — “আমার আসল
+                Discord Username দিতে পারছি না” টিক দিলে current handle দিয়েই
+                জমা হবে এবং admin যাচাই করবেন।
+              </span>
+            </div>
+          </details>
+        </>
+      )}
     </Field>
   );
 }

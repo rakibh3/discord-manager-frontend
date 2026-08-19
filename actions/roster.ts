@@ -78,6 +78,11 @@ export async function editRosterEntry(
   try {
     const data = await updateRosterEntry(id, input);
     revalidatePath("/dashboard/roster");
+    // The roster engagement read model at `/dashboard/roster/status` reflects
+    // `name` / `email` / `isActive` per entry — editing one without
+    // revalidating the engagement surface would leave the status listing
+    // showing the stale row until a hard refresh.
+    revalidatePath("/dashboard/roster/status");
     return {
       ok: true,
       data,
@@ -100,6 +105,7 @@ export async function deactivateEntry(
   try {
     const data = await deactivateRosterEntry(id);
     revalidatePath("/dashboard/roster");
+    revalidatePath("/dashboard/roster/status");
     return {
       ok: true,
       data,
@@ -122,6 +128,7 @@ export async function restoreEntry(
   try {
     const data = await restoreRosterEntry(id);
     revalidatePath("/dashboard/roster");
+    revalidatePath("/dashboard/roster/status");
     return {
       ok: true,
       data,

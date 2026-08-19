@@ -26,7 +26,7 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const normalizeEmail = (raw: string) => raw.trim().toLowerCase();
 
 export type EmailBadge =
-  | { kind: "idle" | "checking" | "malformed" }
+  | { kind: "idle" | "checking" | "malformed" | "gate-off" }
   | { kind: "verified"; message: string }
   | { kind: "not-enrolled"; message: string }
   | { kind: "error"; retryAfter: number | null };
@@ -34,9 +34,9 @@ export type EmailBadge =
 /** Whether the live badge allows submission right now. Email verification mirrors
  *  Discord handle verification: only a `verified` badge unblocks submit. A
  *  malformed, unknown, erroring, or still-`checking` email blocks submit until
- *  it resolves. */
+ *  it resolves. When the gate is off, every well-formed address is `verified`. */
 export function isEmailVerified(badge: EmailBadge): boolean {
-  return badge.kind === "verified";
+  return badge.kind === "verified" || badge.kind === "gate-off";
 }
 
 /**
@@ -53,12 +53,17 @@ export function EmailField({
   error,
   fieldId,
   onVerifiedChange,
+  /** When the roster gate is OFF (the default), the badge never renders and a
+   *  well-formed address is treated as verified for gating purposes. Read on
+   *  mount from `/attendance/window`'s `emailVerificationRequired` field. */
+  emailVerificationRequired = true,
 }: {
   value: string;
   onChange: (value: string) => void;
   error?: string;
   fieldId: string;
   onVerifiedChange?: (verified: boolean) => void;
+  emailVerificationRequired?: boolean;
 }) {
   const abortRef = useRef<AbortController | null>(null);
 
@@ -72,25 +77,32 @@ export function EmailField({
   const address = normalizeEmail(value);
   const malformed = address !== "" && !EMAIL_REGEX.test(address);
 
+  // When the gate is OFF, we never verify and every well-formed address is
+  // treated as `verified` for gating purposes. The badge sits in a `gate-off`
+  // state so the UI shows nothing rather than a misleading "✅ enrolled".
+  const gateOff = !emailVerificationRequired;
+
   // `useMemo` keeps the badge referentially stable across renders that don't
   // change inputs, so the parent `useEffect` that reports the verdict only
   // fires when the verdict actually changes.
   const badge: EmailBadge = useMemo(
     () =>
-      address === ""
-        ? { kind: "idle" }
-        : malformed
-          ? { kind: "malformed" }
-          : !API_BASE
-            ? { kind: "error", retryAfter: null }
-            : remote?.address === address
-              ? remote.badge
-              : { kind: "checking" },
-    [address, malformed, remote],
+      gateOff
+        ? { kind: "gate-off" }
+        : address === ""
+          ? { kind: "idle" }
+          : malformed
+            ? { kind: "malformed" }
+            : !API_BASE
+              ? { kind: "error", retryAfter: null }
+              : remote?.address === address
+                ? remote.badge
+                : { kind: "checking" },
+    [address, malformed, remote, gateOff],
   );
 
   useEffect(() => {
-    if (address === "" || malformed || !API_BASE) {
+    if (gateOff || address === "" || malformed || !API_BASE) {
       return;
     }
 
@@ -155,7 +167,7 @@ export function EmailField({
     };
     // Keyed on the *normalized* address, so retyping the same address with
     // different casing or padding does not spend another request.
-  }, [address, malformed]);
+  }, [address, malformed, gateOff]);
 
   // Report the verdict to the parent so it can gate submit.
   useEffect(() => {
@@ -163,7 +175,10 @@ export function EmailField({
   }, [badge, onVerifiedChange]);
 
   const statusId = `${fieldId}-status`;
-  const showBadge = badge.kind !== "idle";
+  // Skip the badge entirely when the gate is OFF — there is nothing to verify
+  // and a ✅ on every well-formed address would mislead a student into thinking
+  // any address is enrolled.
+  const showBadge = badge.kind !== "idle" && badge.kind !== "gate-off";
 
   return (
     <Field
@@ -250,6 +265,16 @@ export function EmailField({
 
       {error ? (
         <FieldDescription className="text-destructive">{error}</FieldDescription>
+      ) : null}
+
+      {/* When the roster gate is armed, a non-enrolled email is refused before
+          any row is written. One line states the rule; the deeper "what then"
+          lives in the on-submit alert so the empty form does not become a wall
+          of text. */}
+      {emailVerificationRequired ? (
+        <FieldDescription className="text-muted-foreground/90">
+          ভর্তির সময় যে ইমেইল দিয়েছিলেন সেটিই লিখুন — অন্য ইমেইল হলে জমা হবে না।
+        </FieldDescription>
       ) : null}
     </Field>
   );

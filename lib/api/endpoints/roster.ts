@@ -99,7 +99,7 @@ export function patchRosterSettings(
 
 export type RosterStatusListOptions = Omit<
   RosterStatusQuery,
-  "date" | "from" | "to" | "daysOfWeek"
+  "date" | "from" | "to"
 >;
 
 /** `GET /api/roster/status/counts` — the seven date-mode figures or the
@@ -151,5 +151,11 @@ export function rosterStatusExportPath(
   if (options.pairingState) params.set("pairingState", options.pairingState);
   if (options.status) params.set("status", options.status);
   if (options.search) params.set("search", options.search);
+  // Comma-joined to match the listing's weekday convention. Range-mode only —
+  // without this, an admin who narrowed the dashboard by weekday exports the
+  // unfiltered CSV.
+  if (options.daysOfWeek && options.daysOfWeek.length > 0) {
+    params.set("daysOfWeek", options.daysOfWeek.join(","));
+  }
   return `/roster/status/export?${params.toString()}`;
 }

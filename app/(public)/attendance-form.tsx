@@ -1,7 +1,7 @@
 "use client";
 
 import { CheckCircle2, CircleAlert, Send } from "lucide-react";
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import { DiscordHandleField } from "./discord-handle-field";
 import { EmailField } from "./email-field";
@@ -14,6 +14,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Field,
   FieldDescription,
@@ -39,6 +47,7 @@ type Outcome =
   | { kind: "already"; message: string }
   | { kind: "not-member" }
   | { kind: "not-enrolled"; message?: string }
+  | { kind: "handle-mismatch"; message: string }
   | { kind: "rate-limited"; retryAfter: number | null }
   | { kind: "error"; message: string };
 
@@ -47,11 +56,25 @@ type Values = {
   phone: string;
   email: string;
   discordUsername: string;
+  /** Ticked when the student's Discord pairing does not match the on-file
+   *  record. Tells the backend to record the submission anyway and queue a
+   *  mismatch report for an admin to review. */
+  cannotEnterRealDiscordUsername: boolean;
 };
 
-const EMPTY: Values = { name: "", phone: "", email: "", discordUsername: "" };
+const EMPTY: Values = {
+  name: "",
+  phone: "",
+  email: "",
+  discordUsername: "",
+  cannotEnterRealDiscordUsername: false,
+};
 
-export function AttendanceForm() {
+export function AttendanceForm({
+  emailVerificationRequired = true,
+}: {
+  emailVerificationRequired?: boolean;
+}) {
   const [values, setValues] = useState<Values>(EMPTY);
   const [errors, setErrors] = useState<Partial<Record<keyof Values, string>>>({});
   const [outcome, setOutcome] = useState<Outcome | null>(null);
@@ -68,7 +91,13 @@ export function AttendanceForm() {
   const emailId = useId();
   const handleId = useId();
 
-  const setField = (field: keyof Values, value: string) => {
+  // Holds the Alert element ref so a failed submit can move focus to it —
+  // keyboard and screen-reader users otherwise have to scroll back up to read
+  // what the server said, which is the entire point of the alert.
+  const alertRef = useRef<HTMLDivElement | null>(null);
+  const reportButtonRef = useRef<HTMLButtonElement | null>(null);
+
+  const setField = (field: keyof Values, value: string | boolean) => {
     setValues((current) => ({ ...current, [field]: value }));
     setErrors((current) => ({ ...current, [field]: undefined }));
   };
@@ -92,10 +121,10 @@ export function AttendanceForm() {
   const blockingReason = ((): string | null => {
     // Required-field checks first — a missing value blocks before any
     // verification could even fire.
-    if (!values.name.trim()) return "আপনার নাম লিখুন।";
-    if (!values.phone.trim()) return "ফোন নম্বর লিখুন।";
-    if (!values.email.trim()) return "ইমেইল ঠিকানা লিখুন।";
-    if (!values.discordUsername.trim()) return "Discord Username লিখুন।";
+    if (!values.name.trim()) return "Enter your full name.";
+    if (!values.phone.trim()) return "Enter your phone number.";
+    if (!values.email.trim()) return "Enter your email address.";
+    if (!values.discordUsername.trim()) return "Enter your Discord username.";
 
     // Schema-level rules (length, regex). The fields above will already have
     // been entered; this catches e.g. an empty-after-trim phone or a
@@ -104,32 +133,51 @@ export function AttendanceForm() {
     if (!parsed.success) {
       const first = parsed.error.issues[0];
       const field = first?.path[0] as keyof Values | undefined;
-      if (field === "phone") return "ফোন নম্বরের ফরম্যাট ঠিক করুন।";
-      if (field === "name") return "নামের ফরম্যাট ঠিক করুন।";
-      if (field === "email") return "ইমেইল ঠিকানার ফরম্যাট ঠিক করুন।";
+      if (field === "phone") return "Fix the phone number format.";
+      if (field === "name") return "Fix the name format.";
+      if (field === "email") return "Fix the email address format.";
       if (field === "discordUsername")
-        return "Discord Username-এর ফরম্যাট ঠিক করুন।";
+        return "Fix the Discord username format.";
     }
 
     // Live verification — both must come back as `true` before submit unlocks.
     // `null` means the debounce is still pending or the request failed without
     // a verdict; either way, do not let the button fire yet.
     if (handleVerified === null)
-      return "Discord Username যাচাই হচ্ছে… (Checking Discord handle…)";
+      return "Checking Discord handle…";
     if (!handleVerified)
-      return "Discord Username সার্ভারে পাওয়া যাচ্ছে না - সঠিক Username লিখুন।";
+      return "Discord username not found in the server. Enter the correct username.";
     if (emailVerified === null)
-      return "ইমেইল যাচাই হচ্ছে… (Checking email…)";
+      return "Checking email…";
     if (!emailVerified)
-      return "এই ইমেইল এনরোলমেন্ট রোস্টারে নেই — কোর্সে যে ইমেইল দিয়ে ভর্তি হয়েছিলেন সেটি লিখুন।";
+      return "Email not on enrolment roster. Use the email you registered with for the course.";
 
     return null;
   })();
 
   const canSubmit = blockingReason === null && !submitting;
 
-  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  // After a server-side failure, move keyboard focus to the top-of-form
+  // alert so the next step is announced and reachable without scrolling.
+  // Only fires on the failure branches — a successful submit replaces the
+  // form with the success card, and moving focus mid-edit on every keystroke
+  // would be hostile.
+  useEffect(() => {
+    if (!outcome) return;
+    if (outcome.kind === "success") return;
+    alertRef.current?.focus();
+  }, [outcome]);
+
+  const submit = async (
+    event?: React.FormEvent<HTMLFormElement> | React.MouseEvent<HTMLButtonElement>,
+    /** Modal-triggered resubmit sends the flag; the form's own submit does not.
+     *  Passed as an argument rather than read from `pendingReport` so the
+     *  click handler's React state updates don't race the read inside this
+     *  function — without it, the flag is queued but the request still ships
+     *  with `false`, and the backend returns 403 again. */
+    fromMismatchReport = false,
+  ) => {
+    event?.preventDefault();
     if (submitting) return;
 
     // Defence in depth: even with the button disabled, a paste-then-submit
@@ -139,14 +187,14 @@ export function AttendanceForm() {
       setErrors((current) => ({
         ...current,
         discordUsername:
-          "আগে একটি সচল Discord Username যাচাই করুন — handle-এর পাশে ✅ দেখা যাবে।",
+          "Verify a live Discord username first — wait for the ✅ next to the handle.",
       }));
       return;
     }
     if (emailVerified !== true) {
       setErrors((current) => ({
         ...current,
-        email: "আগে একটি enrolled ইমেইল যাচাই করুন — ফি�্ডের পাশে ✅ দেখা যাবে।",
+        email: "Verify an enrolled email first — wait for the ✅ next to the field.",
       }));
       return;
     }
@@ -174,11 +222,23 @@ export function AttendanceForm() {
     setSubmitting(true);
     setOutcome(null);
 
+    // The modal's "Report & Submit" button passes `fromMismatchReport=true`
+    // synchronously so the flag ships with this request even though the modal
+    // also flips `pendingReport` (which the `finally` block clears once the
+    // retry settles — see below). We OR with the field value so a manually
+    // preserved state also propagates if a future form gains a checkbox.
+    const optIn =
+      values.cannotEnterRealDiscordUsername || fromMismatchReport;
+    const submitPayload = {
+      ...parsed.data,
+      ...(optIn ? { cannotEnterRealDiscordUsername: true } : {}),
+    };
+
     try {
       const response = await fetch(`${API_BASE}/attendance/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(parsed.data),
+        body: JSON.stringify(submitPayload),
       });
 
       if (response.status === 201) {
@@ -202,18 +262,39 @@ export function AttendanceForm() {
         | { message?: string; errorDetails?: { issues?: { path: string; message: string }[] } }
         | null;
 
-      // 403 means the email is not on the enrolled student list (when verification is armed).
+          // 403 splits into two cases that point at different fields:
+      //   - the email is not on the enrolled student list (when verification is armed)
+      //   - the Discord handle does not match the one already paired with that email
+      // The two are decided by the server's message text, not by the status code.
+      // Spec quote: "Branching on the message text (and not just the status) is what
+      // lets the form tell the student which input to fix."
       if (response.status === 403) {
+        const message = body?.message ?? "";
+        const isHandleMismatch =
+          /does not match the (one already on file|paired account)/i.test(message);
+
+        if (isHandleMismatch) {
+          setOutcome({
+            kind: "handle-mismatch",
+            message:
+              message ||
+              "Discord username does not match the paired account for this email.",
+          });
+          // The form does not render an in-place checkbox for this case —
+          // a "I cannot enter my real Discord username" opt-in would sit
+          // on every verified handle and ask the student to declare a
+          // problem they may not have. The mismatch modal owns the opt-in.
+          return;
+        }
+
         setOutcome({
           kind: "not-enrolled",
-          message:
-            body?.message ??
-            "এই ইমেইল ঠিকানাটি এনরোলমেন্ট রোস্টারে পাওয়া যায়নি।",
+          message: message || "This email is not on the enrolment roster.",
         });
         setErrors((current) => ({
           ...current,
           email:
-            "এই ইমেইল ঠিকানাটি এনরোলমেন্ট রোস্টারে পাওয়া যায়নি। কোর্সে যে ইমেইল দিয়ে ভর্তি হয়েছিলেন সেটি ব্যবহার করুন।",
+            "Email not on enrolment roster. Use the email you registered with for the course.",
         }));
         return;
       }
@@ -224,7 +305,7 @@ export function AttendanceForm() {
         setErrors((current) => ({
           ...current,
           discordUsername:
-            "এই Discord Username-টি আমাদের কোনো সার্ভারে পাওয়া যায়নি।",
+            "This Discord username is not in any of our servers.",
         }));
         return;
       }
@@ -287,8 +368,8 @@ export function AttendanceForm() {
         </CardHeader>
         <CardContent className="flex flex-col gap-2 text-sm">
           <p>
-            আপনার attendance <strong>{formatCivilDate(outcome.payload.attendanceDate)}</strong>{" "}
-            তারিখের জন্য জমা হয়েছে।
+            Your attendance for <strong>{formatCivilDate(outcome.payload.attendanceDate)}</strong>{" "}
+            has been recorded.
           </p>
           <p className="text-muted-foreground">
             Recorded for{" "}
@@ -303,22 +384,57 @@ export function AttendanceForm() {
             One submission covers every server the handle belongs to, in one
             transaction — the student is never asked to pick one. Naming the
             servers is the only way they can tell that happened.
+
+            Each server carries its own `recorded` (was written by this request)
+            and `alreadySubmitted` (was already on file from an earlier
+            submission) flags, so a partial outcome reads accurately: this run
+            wrote to the recorded ones, the rest were already done.
           */}
-          {(outcome.payload.servers?.length ?? 0) > 1 ? (
-            <p className="text-muted-foreground">
-              এটি{" "}
-              <strong className="text-foreground">
-                {outcome.payload.servers
-                  ?.filter((server) => server.recorded)
-                  .map((server) => server.label)
-                  .join(", ")}
-              </strong>{" "}
-              — সবগুলো সার্ভারের জন্যই রেকর্ড হয়েছে। আলাদা করে আর জমা দিতে হবে না।
-            </p>
-          ) : null}
+          {(() => {
+            const servers = outcome.payload.servers ?? [];
+            if (servers.length <= 1) return null;
+
+            const recorded = servers.filter((s) => s.recorded);
+            const alreadyOnFile = servers.filter(
+              (s) => !s.recorded && s.alreadySubmitted,
+            );
+            const failed = servers.filter(
+              (s) => !s.recorded && !s.alreadySubmitted,
+            );
+
+            return (
+              <div className="text-muted-foreground flex flex-col gap-1.5">
+                {recorded.length > 0 ? (
+                  <p>
+                    These{" "}
+                    <strong className="text-foreground">
+                      {recorded.map((s) => s.label).join(", ")}
+                    </strong>{" "}
+                    servers were recorded by this submission.
+                  </p>
+                ) : null}
+                {alreadyOnFile.length > 0 ? (
+                  <p>
+                    <strong className="text-foreground">
+                      {alreadyOnFile.map((s) => s.label).join(", ")}
+                    </strong>{" "}
+                    — these servers already had an attendance row from an earlier submission; no further action needed.
+                  </p>
+                ) : null}
+                {failed.length > 0 ? (
+                  <p>
+                    <strong className="text-foreground">
+                      {failed.map((s) => s.label).join(", ")}
+                    </strong>{" "}
+                    — these servers did not record. Please try again later.
+                  </p>
+                ) : null}
+              </div>
+            );
+          })()}
           <p className="text-muted-foreground">
-            যদি এখনও <code>#daily-update</code>{" "}
-            চ্যানেলে আপডেট দেওয়া বাকি থাকে, তবে দিয়ে দিন।
+            If a <code>#daily-update</code>{" "}
+            post is still pending, please post it.
           </p>
         </CardContent>
       </Card>
@@ -326,33 +442,45 @@ export function AttendanceForm() {
   }
 
   return (
+    <>
     <Card>
       <CardHeader>
         <CardTitle>Daily Attendance</CardTitle>
         <CardDescription>
-          দিনে একবারই জমা দিতে হবে। সব ঘর পূরণ করা বাধ্যতামূলক।
+          Submit once per day. All fields are required.
         </CardDescription>
       </CardHeader>
 
       <CardContent>
         <form onSubmit={submit} noValidate>
           <FieldGroup>
+            {/*
+              The single alert slot at the top of the form. Only one
+              outcome fires at a time, so wrapping the cases in one focusable
+              region lets the failure effect land keyboard focus on whatever
+              message is currently showing. `tabIndex={-1}` keeps it
+              focusable programmatically without inserting it into the tab
+              order (the buttons below are the next step in the order).
+            */}
+            <div
+              ref={alertRef}
+              tabIndex={-1}
+              className="focus:outline-none"
+            >
             {outcome?.kind === "already" ? (
               <Alert variant="success">
                 <AlertTitle>Already recorded</AlertTitle>
                 <AlertDescription>
-                  {outcome.message} আপনার attendance ইতোমধ্যেই আছে — নতুন করে
-                  কিছু করার দরকার নেই।
+                  {outcome.message} Your attendance is already recorded — no further action needed.
                 </AlertDescription>
               </Alert>
             ) : null}
 
             {outcome?.kind === "not-member" ? (
               <Alert variant="destructive">
-                <AlertTitle>You are not in the Discord server</AlertTitle>
+                <AlertTitle>Not in the Discord server</AlertTitle>
                 <AlertDescription>
-                  এই Discord Username-টি আমাদের কোনো সার্ভারে নেই (অথবা আপনি সার্ভার
-                  ছেড়ে গেছেন)। আগে সার্ভারে জয়েন করুন, তারপর আবার চেষ্টা করুন।
+                  This Discord username is not in any of our servers. Join the server first, then try again.
                 </AlertDescription>
               </Alert>
             ) : null}
@@ -362,29 +490,19 @@ export function AttendanceForm() {
                 <AlertTitle>Email not enrolled</AlertTitle>
                 <AlertDescription>
                   {outcome.message ??
-                    "এই ইমেইল ঠিকানাটি আমাদের এনরোলমেন্ট রোস্টারে নেই। কোর্সে ভর্তি হওয়ার সময় যে ইমেইল ব্যবহার করেছিলেন সেটি দিন।"}
+                    "This email is not on the enrolment roster. Use the email you registered with for the course."}
                 </AlertDescription>
               </Alert>
             ) : null}
 
-            {outcome?.kind === "rate-limited" ? (
-              <Alert variant="warning">
-                <AlertTitle>Too many attempts</AlertTitle>
-                <AlertDescription>
-                  অনেকবার চেষ্টা করা হয়েছে।{" "}
-                  {outcome.retryAfter
-                    ? `প্রায় ${outcome.retryAfter} সেকেন্ড পর আবার চেষ্টা করুন।`
-                    : "কিছুক্ষণ পর আবার চেষ্টা করুন।"}{" "}
-                  আপনার লেখা তথ্যগুলো মুছে যায়নি।
-                </AlertDescription>
-              </Alert>
-            ) : null}
+            {/* handle-mismatch renders as a modal below, not a top-of-form alert */}
 
             {outcome?.kind === "error" ? (
               <Alert variant="destructive" role="alert">
                 <AlertDescription>{outcome.message}</AlertDescription>
               </Alert>
             ) : null}
+            </div>
 
             <Field data-invalid={errors.name ? true : undefined}>
               <FieldLabel htmlFor={nameId}>
@@ -409,7 +527,7 @@ export function AttendanceForm() {
               />
               <FieldDescription id={`${nameId}-hint`}>
                 {errors.name ??
-                  "আপনার পূর্ণ নাম ইংরেজি অক্ষরে লিখুন (English letters only) — যেমন Rakibul Hasan।"}
+                  "Enter your full name in English letters (English letters only) — e.g., Rakibul Hasan."}
               </FieldDescription>
             </Field>
 
@@ -437,7 +555,7 @@ export function AttendanceForm() {
               {/* The format hint is visible before any error, not only after. */}
               <FieldDescription id={`${phoneId}-hint`}>
                 {errors.phone ??
-                  "যেমন 01711000000। +880 বা 880 দিয়ে শুরু করলেও চলবে।"}
+                  "e.g., 01711000000. Starting with +880 or 880 also works."}
               </FieldDescription>
             </Field>
 
@@ -447,6 +565,7 @@ export function AttendanceForm() {
               onChange={setEmailField}
               error={errors.email}
               onVerifiedChange={setEmailVerified}
+              emailVerificationRequired={emailVerificationRequired}
             />
 
             <DiscordHandleField
@@ -457,6 +576,13 @@ export function AttendanceForm() {
               onVerifiedChange={setHandleVerified}
             />
 
+            {/*
+              The handle-mismatch opt-in lives inside the modal below
+              (see `<Dialog>` after `</form>`), not in the form body. A
+              "I cannot enter my real Discord username" checkbox on every
+              verified handle would ask the student to declare a problem
+              they may not have.
+            */}
             <Field>
               {/*
                 The button is disabled until BOTH the Discord handle and (when
@@ -474,7 +600,7 @@ export function AttendanceForm() {
                 ) : (
                   <Send data-icon="inline-start" />
                 )}
-                {submitting ? "জমা দেওয়া হ�্ছে…" : "Attendance জমা দিন"}
+                {submitting ? "Submitting…" : "Submit Attendance"}
               </Button>
 
               {/*
@@ -499,5 +625,68 @@ export function AttendanceForm() {
         </form>
       </CardContent>
     </Card>
+
+    {/*
+      Mismatch modal — opens after a 403 handle-mismatch. Diagnosis is the
+      backend's literal message. Two recovery options:
+        * "Cancel" dismisses the modal; the form clears its outcome so
+          the student can fix the handle (or leave) and resubmit.
+        * "Report & Submit" sets the opt-in flag, retries the same
+          submission, and the backend queues a mism report on success.
+    */}
+    <Dialog
+      open={outcome?.kind === "handle-mismatch"}
+      onOpenChange={(open) => {
+        if (!open && outcome?.kind === "handle-mismatch") {
+          setOutcome(null);
+          // Reset the verdict: the previous handle verdict was for the
+          // pre-mismatch submission. Without this, the form stays
+          // blocked on a stale verdict.
+          setHandleVerified(null);
+        }
+      }}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Discord username mismatch</DialogTitle>
+          <DialogDescription>
+            {outcome?.kind === "handle-mismatch" ? outcome.message : null}
+          </DialogDescription>
+        </DialogHeader>
+        <p className="text-muted-foreground text-sm">
+          If this is not the Discord username paired with your email,
+          an admin can review the submission and update the pairing.
+        </p>
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setOutcome(null);
+              setHandleVerified(null);
+            }}
+          >
+            Cancel
+          </Button>
+          <Button
+            ref={reportButtonRef}
+            disabled={submitting}
+            onClick={() => {
+              setOutcome(null);
+              // Pass the flag as an argument so the request leaves the
+              // browser with `cannotEnterRealDiscordUsername: true` already
+              // in the payload. Reading `pendingReport` after `setPendingReport(true)`
+              // inside the same handler would still see the stale value, so
+              // the flag would never actually ship and the modal would
+              // re-open with the same 403 message.
+              void submit(undefined, true);
+            }}
+          >
+            {submitting ? <Spinner data-icon="inline-start" /> : null}
+            Report & Submit
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }

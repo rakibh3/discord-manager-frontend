@@ -26,7 +26,7 @@ const PATHS = {
 
 export type DailyStatusListOptions = Omit<
   DailyStatusQuery,
-  "date" | "from" | "to" | "daysOfWeek"
+  "date" | "from" | "to"
 >;
 
 /** `GET /api/daily-status/counts` — the overview figures. In date mode these
@@ -100,5 +100,11 @@ export function dailyStatusExportPath(
     params.set("minMissedBothDays", String(options.minMissedBothDays));
   }
   if (options.search) params.set("search", options.search);
+  // Comma-joined to match the listing convention (`periodQuery` joins with
+  // "," too). Range-mode only — an admin who narrowed the dashboard by
+  // weekday exports the unfiltered CSV without this.
+  if (options.daysOfWeek && options.daysOfWeek.length > 0) {
+    params.set("daysOfWeek", options.daysOfWeek.join(","));
+  }
   return `${PATHS.export}?${params.toString()}`;
 }
