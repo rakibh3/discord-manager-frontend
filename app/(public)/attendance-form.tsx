@@ -242,9 +242,8 @@ export function AttendanceForm({
             </p>
           ) : null}
           <p className="text-muted-foreground">
-            আজকের জন্য আর কিছু করার নেই। ভুলবেন না — <code>#daily-update</code>{" "}
-            চ্যানেলে আপনার আপডেটটিও পোস্ট করতে হবে। একটি সার্ভারে পোস্ট করলেই
-            সবগুলোর জন্য গণ্য হবে।
+            যদি এখনও <code>#daily-update</code>{" "}
+            চ্যানেলে আপডেট দেওয়া বাকি থাকে, তবে দিয়ে দিন।
           </p>
         </CardContent>
       </Card>

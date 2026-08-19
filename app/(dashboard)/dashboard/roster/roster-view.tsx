@@ -1,6 +1,7 @@
 "use client";
 
-import { FileSpreadsheet, History, Users } from "lucide-react";
+import { FileSpreadsheet, History, LineChart, Users } from "lucide-react";
+import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 
@@ -65,14 +66,25 @@ export function RosterView({
           </p>
         </div>
 
-        <Button
-          size="sm"
-          className="self-start"
-          onClick={() => setImportDialogOpen(true)}
-        >
-          <FileSpreadsheet data-icon="inline-start" aria-hidden />
-          Import spreadsheet
-        </Button>
+        <div className="flex flex-wrap items-center gap-2 self-start">
+          <Button
+            variant="outline"
+            size="sm"
+            asChild
+          >
+            <Link href="/dashboard/roster/status">
+              <LineChart data-icon="inline-start" aria-hidden />
+              Engagement
+            </Link>
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => setImportDialogOpen(true)}
+          >
+            <FileSpreadsheet data-icon="inline-start" aria-hidden />
+            Import spreadsheet
+          </Button>
+        </div>
       </div>
 
       <RosterGateCard initialSettings={settings} />

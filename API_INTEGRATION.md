@@ -589,7 +589,12 @@ export type SyncState = {
 };
 
 export type DiscordSyncStatus = {
-  bot: { connected: boolean; tag: string | null; guildId: string | null };
+  bot: {
+    connected: boolean;
+    tag: string | null;
+    /** Every configured server's snowflake. Empty when the bot is offline. */
+    guildIds: string[];
+  };
   members: { total: number; active: number; departed: number };
   lastSync: SyncState;
   dailyUpdate: {
@@ -597,11 +602,28 @@ export type DiscordSyncStatus = {
     reason: string | null;
     channelId: string | null;
   };
+  servers: Array<{
+    guildId: string;
+    label: string;
+    reachable: boolean;
+    unreachableReason: string | null;
+    members: { total: number; active: number; departed: number } | null;
+    lastSync: { ranAt: string; ok: boolean; error: string | null } | null;
+    channels: {
+      attendance?: { id: string; verified: boolean; error: string | null };
+      dailyUpdate?: { id: string; verified: boolean; error: string | null };
+      dailyUpdateReminder?: {
+        id: string;
+        verified: boolean;
+        error: string | null;
+      };
+    };
+  }>;
 };
 
 export type SyncTriggerResult = {
   accepted: true;
-  guildId: string;
+  guildIds: string[];
   startedAt: string;
 };
 
@@ -632,13 +654,30 @@ export type ChannelSchedulePayload = {
     nextLockAt: string | null;
     lastRun: ScheduleLastRun | null;
   };
+  /** Top-level channel reports the first server — use `servers[]` for the full set. */
   channel: { id: string | null; isOpen: boolean };
+  /** Live state per configured server — what the dashboard renders. */
+  servers: Array<{
+    guildId: string;
+    label: string;
+    channelId: string;
+    isOpen: boolean | null; // null when the live read failed
+    lastRun: ScheduleLastRun | null;
+  }>;
 };
 
 export type ChannelToggleResult = {
-  channelId: string | null;
   isOpen: boolean;
-  announced: boolean;
+  /** Fan-out envelope. Always read `summary.failed` — partial success is 200. */
+  summary: { total: number; succeeded: number; failed: number };
+  servers: Array<{
+    guildId: string;
+    label: string;
+    ok: boolean;
+    value?: { channelId: string | null; isOpen: boolean; announced: boolean };
+    error?: string;
+    channelId: string | null;
+  }>;
 };
 
 // ── Attendance announcement ─────────────────────────────────────────────
@@ -777,30 +816,71 @@ export type ReminderStatus =
 export type ReminderDeliveryStatus =
   'PENDING' | 'DELIVERED' | 'DM_CLOSED' | 'FAILED';
 
+export type ReminderCriterion = 'MISSING_UPDATE' | 'MISSING_BOTH';
+
 export type ReminderTarget = {
   memberId: string;
   discordUserId: string;
   discordUsername: string;
   displayName: string | null;
+  /** The member record's configured server — the row's per-server audit lane. */
+  guildId: string;
+  serverLabel: string;
 };
 
-export type ReminderTargetsPayload = {
+/** Echo of a date-mode reminder period. */
+export type ReminderDatePeriodEcho = {
+  mode: 'date';
   date: string;
+  daysInRange: number;
+};
+
+/** Echo of a range-mode reminder period. */
+export type ReminderRangePeriodEcho = {
+  mode: 'range';
+  from: string;
+  to: string;
+  /** Weekday filter that was applied, or null when every day counted. */
+  daysOfWeek: number[] | null;
+  daysInRange: number;
+};
+
+export type ReminderTargetsPayload = (
+  | ReminderDatePeriodEcho
+  | ReminderRangePeriodEcho
+) & {
+  criterion: ReminderCriterion;
+  minMissedDays: number;
+  /**
+   * Recipient rows — one per member record. Lower than `uniqueRecipients` when
+   * a person is in several servers.
+   */
   targetCount: number;
+  /** Distinct accounts that will actually be DMed. */
+  uniqueRecipients: number;
   targets: ReminderTarget[];
 };
 
 export type ReminderQueued = {
   id: string;
-  reminderDate: string;
-  targetCount: number;
-  queuedJobs: number;
-  status: ReminderStatus;
-};
+} & (
+  | ReminderDatePeriodEcho
+  | ReminderRangePeriodEcho
+) & {
+    criterion: ReminderCriterion;
+    minMissedDays: number;
+    targetCount: number;
+    queuedJobs: number;
+    status: ReminderStatus;
+  };
 
 export type ReminderProgress = {
   id: string;
-  reminderDate: string;
+  reminderStartDate: string;
+  reminderEndDate: string;
+  criterion: ReminderCriterion;
+  minMissedDays: number;
+  daysOfWeek: number[] | null;
   message: string;
   status: ReminderStatus;
   targetCount: number;
@@ -815,7 +895,11 @@ export type ReminderProgress = {
 
 export type ReminderLogRow = {
   id: string;
-  reminderDate: string;
+  reminderStartDate: string;
+  reminderEndDate: string;
+  criterion: ReminderCriterion;
+  minMissedDays: number;
+  daysOfWeek: number[];
   message: string;
   targetCount: number;
   sentCount: number;
@@ -1472,9 +1556,39 @@ export async function updateProfile(_prev: unknown, formData: FormData) {
 
 ### 8.3 Discord — `/api/discord`
 
+#### 🔐 `GET /api/discord/servers`
+
+No parameters. Returns the configured servers and whether the bot currently reaches each.
+
+```jsonc
+{
+  "success": true,
+  "statusCode": 200,
+  "message": "Configured Discord servers retrieved successfully",
+  "data": [
+    {
+      "guildId": "146…",
+      "label": "Batch A",
+      "name": "Programming Hero B12",
+      "reachable": true,
+      "unreachableReason": null,
+    },
+    {
+      "guildId": "246…",
+      "label": "Batch B",
+      "name": null,
+      "reachable": false,
+      "unreachableReason": "The guild could not be fetched: Missing Access",
+    },
+  ],
+}
+```
+
+Use this as the source of truth for any server filter — never hard-code IDs. **A single-server deployment returns one entry**, not zero — treat one as the normal case.
+
 #### 🔐 `GET /api/discord/sync/status`
 
-No parameters.
+No parameters. Reports bot health, member counts, the last sync summary, and the daily-update ingestion state **per configured server**.
 
 ```jsonc
 {
@@ -1485,7 +1599,7 @@ No parameters.
     "bot": {
       "connected": true,
       "tag": "DailyBot#1234",
-      "guildId": "1234567890123456789",
+      "guildIds": ["146…", "246…"],
     },
     "members": { "total": 5201, "active": 5187, "departed": 14 },
     "lastSync": {
@@ -1505,19 +1619,65 @@ No parameters.
       "reason": null,
       "channelId": "1234567890123456789",
     },
+    "servers": [
+      {
+        "guildId": "146…",
+        "label": "Batch A",
+        "reachable": true,
+        "unreachableReason": null,
+        "members": { "total": 3000, "active": 2998, "departed": 2 },
+        "lastSync": { "ranAt": "…", "ok": true, "error": null },
+        "channels": {
+          "attendance": {
+            "id": "111…",
+            "verified": true,
+            "error": null,
+          },
+          "dailyUpdate": {
+            "id": "222…",
+            "verified": true,
+            "error": null,
+          },
+          "dailyUpdateReminder": {
+            "id": "333…",
+            "verified": true,
+            "error": null,
+          },
+        },
+      },
+      {
+        "guildId": "246…",
+        "label": "Batch B",
+        "reachable": false,
+        "unreachableReason": "The guild could not be fetched: Missing Access",
+        "members": null,
+        "lastSync": null,
+        "channels": {
+          "dailyUpdate": {
+            "id": "444…",
+            "verified": false,
+            "error": "daily-update channel 444… belongs to guild 999…, not 246…",
+          },
+        },
+      },
+    ],
   },
 }
 ```
 
-**Surface these three things prominently — they are otherwise invisible failures:**
+**Surface these things prominently — they are otherwise invisible failures:**
 
 - `dailyUpdate.ingestionEnabled === false` → the bot fell back to a login without the Message Content intent. Every message is arriving empty, so **no daily updates are being recorded** and the dashboard will show everyone as `MISSING_UPDATE`. Show `reason` and link to the Developer Portal fix.
 - `lastSync.guardTripped === true` → the departure guard skipped a reconcile because a member fetch came back suspiciously small. The directory is stale but intact; this is the guard working, not a bug. Warn, don't alarm.
 - `bot.connected === false` → sync, ingestion, the scheduler's channel edits, and reminder DMs are all down. The REST API keeps serving.
+- **`servers[i].channels[*].verified === false`** → a channel ID is misconfigured for that server. The names match across servers, so a swapped ID is invisible in Discord. The `error` field names what is wrong; **if one server goes quiet, look here first.**
+- `servers[i].reachable === false` → bot cannot see that guild; the rest of that server's data is `null`. Sync, ingestion, scheduler edits and reminder DMs targeting it all silently fail.
 
 #### 🔐 `POST /api/discord/sync`
 
-No body. Fires a full guild re-sync **without awaiting it** — a real sync takes tens of seconds.
+**Body** — empty or `{ "guildId": "…" }`. An empty body (or omitted `guildId`) syncs every configured server, which is the ordinary case. A named `guildId` narrows the sync to one server — useful when a single server's directory needs repairing without paying for a full multi-thousand-member fetch of the others. The ID must be a 17–20 digit Discord snowflake, and it must be one of the configured servers — an unknown ID is a 400 naming it.
+
+Fires the sync **without awaiting it** — a real sync takes tens of seconds.
 
 **202**
 
@@ -1528,16 +1688,17 @@ No body. Fires a full guild re-sync **without awaiting it** — a real sync take
   "message": "Member sync started",
   "data": {
     "accepted": true,
-    "guildId": "…",
+    "guildIds": ["146…", "246…"],
     "startedAt": "2026-08-17T09:20:00.000Z",
   },
 }
 ```
 
-| Status | Cause                                                |
-| ------ | ---------------------------------------------------- |
-| 409    | a sync is already running                            |
-| 503    | bot not connected, or the guild could not be fetched |
+| Status | Cause                                                                                  |
+| ------ | -------------------------------------------------------------------------------------- |
+| 400    | `guildId` is not a configured server — message names it                                |
+| 409    | a sync is already running                                                              |
+| 503    | bot not connected, or every targeted guild could not be fetched                        |
 
 Because the response returns before the work does, poll `GET /sync/status` until `lastSync.running` flips to `false`:
 
@@ -1547,9 +1708,10 @@ import { revalidateTag } from 'next/cache';
 import { api } from '@/lib/api/client';
 import type { SyncTriggerResult } from '@/lib/api/types';
 
-export async function triggerMemberSync() {
+export async function triggerMemberSync(guildId?: string) {
   const result = await api<SyncTriggerResult>('/discord/sync', {
     method: 'POST',
+    body: guildId ? { guildId } : {},
   });
   revalidateTag('discord-status');
   return result; // the client then polls until lastSync.running === false
@@ -1596,13 +1758,30 @@ No parameters. The row is created lazily with defaults (19:00 / 23:59 / all seve
       },
     },
     "channel": { "id": "1234567890123456789", "isOpen": true },
+    "servers": [
+      {
+        "guildId": "146…",
+        "label": "Batch A",
+        "channelId": "222…",
+        "isOpen": true,
+        "lastRun": { "action": "open", "trigger": "schedule", "ranAt": "…", "ok": true, "error": null },
+      },
+      {
+        "guildId": "246…",
+        "label": "Batch B",
+        "channelId": "444…",
+        "isOpen": false,
+        "lastRun": { "action": "lock", "trigger": "schedule", "ranAt": "…", "ok": false, "error": "Missing Permissions" },
+      },
+    ],
   },
 }
 ```
 
 - **`openTime` is read-only here and `openTimeSource` is always `"ANNOUNCEMENT"`.** The channel opens at the moment the attendance announcement is posted, so the open time mirrors `announceTime` from `GET /api/announcement/attendance`. Render it as a disabled field with a link to the announcement form; sending it back in a `PATCH` is a 400.
-- `channel.isOpen` is read **live from Discord** on every request (an admin can flip the overwrite by hand), so this endpoint always costs a Discord API call — never cache it.
-- **`scheduler.lastRun.error` is where a missing `Manage Roles` permission shows up.** If the channel stops opening, check here first; `DiscordAPIError[50013]` means the bot lacks the permission on the channel.
+- `channel.id` reports the **first** configured channel; the per-server channel ID lives under `servers[i].channelId`. The top-level `channel.isOpen` is the same live read as `servers[0].isOpen` in a single-server deployment.
+- **`servers[i].isOpen` is read live from Discord on every request** (an admin can flip the overwrite by hand), so this endpoint always costs a Discord API call per configured server — never cache it.
+- **`scheduler.lastRun.error` and `servers[i].lastRun.error` are where a missing `Manage Roles` permission shows up.** Per-server last runs surface partial outages that the top-level `lastRun` collapses; the channel that stopped opening is the entry with `ok: false`. `DiscordAPIError[50013]` means the bot lacks the permission on that channel.
 - `scheduler.processEnabled === false` means `SCHEDULER_ENABLED=false` on this process — the timed jobs are off, but the manual open/lock endpoints still work.
 - `nextOpenAt`/`nextLockAt` are `null` when no task is registered (disabled schedule, or a process that isn't scheduling).
 
@@ -1655,14 +1834,17 @@ Build the editor as a time picker + weekday checkboxes. **Never expose a cron fi
 
 #### 🔐 `POST /api/schedule/daily-update/open` and `.../lock`
 
-No body. Forces the channel state **now** and posts an announcement embed to the channel (`announce: true`). The stored schedule is untouched, so the next scheduled transition still fires.
+**Body** — `{ guildIds?: string[] }`. Omitted or empty means **every** configured server, which is the ordinary case. `guildIds` narrows the action — useful for recovering one server whose permission was fixed after the others already moved. Each ID must be a 17–20 digit Discord snowflake and a configured server; an unknown ID is a 400 naming it.
 
-**200** → `data: { channelId, isOpen, announced }`
+Forces the channel state **now** and posts an announcement embed to each targeted channel (`announce: true`). The stored schedule is untouched, so the next scheduled transition still fires.
 
-| Status | Cause                                                                                       |
-| ------ | ------------------------------------------------------------------------------------------- |
-| 403    | the bot lacks `Manage Roles` on the channel — message tells the admin exactly what to grant |
-| 503    | the bot is not connected, or the permission edit failed for another reason                  |
+**200** → `data: { isOpen, summary: { total, succeeded, failed }, servers: [...] }`. The endpoint **fans out across every targeted server** — partial success is `200`, not an error. Each entry in `servers[]` carries `ok`, `value`, and on failure `error` and `channelId`. Always read `data.summary.failed`; only a total failure returns an error status.
+
+| Status | Cause                                                                                                                          |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| 400    | `guildIds` contains an unconfigured server — message names it                                                                  |
+| 403    | the bot lacks `Manage Roles` on one or more channels — the success carries the per-server error; only total failure is 403    |
+| 503    | the bot is not connected, or the permission edit failed for every targeted server                                              |
 
 These are **outward-facing and immediately visible to thousands of students** (they post an embed). Put them behind a confirmation dialog.
 
@@ -1674,55 +1856,166 @@ All routes 🔐. `POST /send` DMs thousands of people and **cannot be undone**.
 
 > **Route order matters on the backend**: `/targets` and `/status` are declared before `/:id`. Don't invent an id-shaped path that collides with them.
 
-#### 🔐 `GET /api/reminders/targets?date=YYYY-MM-DD`
+#### The period: a date OR a from/to range
+
+Every reminder endpoint accepts **either** a single `date` **or** a `from`/`to` pair. The two are mutually exclusive — sending both, or only one half of the pair, is a 400 naming the conflict. Every response states which mode produced it in a `mode` field and echoes the parameters it resolved.
+
+| Parameter          | Applies to      | Meaning                                                                                                                      |
+| ------------------ | --------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `date=YYYY-MM-DD`  | date mode       | One Dhaka day. **Cannot be in the future** — there is nothing to be missing yet, so every member would be a target.           |
+| `from=` + `to=`    | range mode      | An inclusive span of Dhaka days. **Max 92 days** — a blast-radius control.                                                   |
+| `daysOfWeek=0,1,2` | range mode only | Which weekdays inside the span count. `0` is Sunday, the same numbering the channel schedule uses. Omitted counts every day. |
+
+> ⚠️ **`daysOfWeek` is an assertion, not a record.** It is the admin stating which days should count. The system does **not** store when `#daily-update` was actually open on a past day — no such history exists — so nothing verifies the claim. The response echoes `daysOfWeek` and the resulting `daysInRange` precisely so the figure always travels with its denominator.
+
+A `minMissedDays` higher than the number of counted days is a 400 — it could never be met, and a request that always finds nobody is better refused than run.
+
+#### Reminder criteria
+
+| Parameter       | Default          | Meaning                                                                                                  |
+| --------------- | ---------------- | -------------------------------------------------------------------------------------------------------- |
+| `criterion`     | `MISSING_UPDATE` | `MISSING_UPDATE` = no daily update that day. `MISSING_BOTH` = neither attendance nor an update that day. |
+| `minMissedDays` | `1`              | How many counted days the person must have failed to be targeted.                                        |
+
+**The default is deliberate.** `MISSING_UPDATE` with a single `date` is exactly what a broadcast meant before ranges existed, so nothing about your existing send changes. Making `MISSING_BOTH` universal would silently stop reminding a student who fills the attendance form and never posts an update — and the daily-update channel is what this feature exists to drive.
+
+#### 🔐 `GET /api/reminders/targets`
 
 The dry run. Sends nothing.
 
-| Query  | Type   | Rules                                                                   |
-| ------ | ------ | ----------------------------------------------------------------------- |
-| `date` | string | **required**, `YYYY-MM-DD`, a real calendar date, **not in the future** |
+**Date mode:**
 
-**200** → `data: { date, targetCount, targets: ReminderTarget[] }`
+| Query  | Type   | Rules                                                 |
+| ------ | ------ | ----------------------------------------------------- |
+| `date` | string | **required**, `YYYY-MM-DD`, not in the future         |
 
-The list is **not paginated** — for a 5,000-member guild with a bad day this can be thousands of rows. Render it virtualized, or show `targetCount` plus a preview slice.
+**Range mode:**
 
-The target definition is "currently in the guild **and** has no `daily_updates` row for that date". It is the exact same query `POST /send` uses, so the preview cannot disagree with the send.
+| Query         | Type   | Rules                                                                  |
+| ------------- | ------ | ---------------------------------------------------------------------- |
+| `from`        | string | required, `YYYY-MM-DD`, ≤ today                                        |
+| `to`          | string | required, `YYYY-MM-DD`, ≤ today, ≥ `from`                              |
+| `daysOfWeek`  | string | optional, comma-separated `0..6`                                       |
+
+**Always allowed (both modes):**
+
+| Query         | Type   | Rules                                                                                  |
+| ------------- | ------ | -------------------------------------------------------------------------------------- |
+| `criterion`   | enum   | default `MISSING_UPDATE`                                                               |
+| `minMissedDays` | number | default `1`, integer ≥ 1                                                                |
+| `guildIds`    | string | optional, comma-separated Discord snowflakes — restrict the preview to listed servers. Omitted means every configured server. Each ID must be a configured server; an unknown ID is a 400 naming it. |
+
+**200**
+
+```jsonc
+// date mode
+{
+  "data": {
+    "mode": "date",
+    "date": "2026-08-16",
+    "daysInRange": 1,
+    "criterion": "MISSING_UPDATE",
+    "minMissedDays": 1,
+    "targetCount": 412,
+    "uniqueRecipients": 410,
+    "targets": [
+      {
+        "memberId": "…",
+        "discordUserId": "…",
+        "discordUsername": "rakib_",
+        "displayName": "Rakib",
+        "guildId": "146…",
+        "serverLabel": "Batch A",
+      },
+    ],
+  }
+}
+
+// range mode
+{
+  "data": {
+    "mode": "range",
+    "from": "2026-08-15",
+    "to": "2026-08-17",
+    "daysOfWeek": null,
+    "daysInRange": 3,
+    "criterion": "MISSING_BOTH",
+    "minMissedDays": 2,
+    "targetCount": 87,
+    "uniqueRecipients": 87,
+    "targets": [ … ],
+  }
+}
+```
+
+`targetCount` counts **recipient rows** (one per member record, so a person in two servers appears twice — that is the per-server audit). `uniqueRecipients` counts **people** who will actually be DMed (lower when the same account is in several servers). The gap is not duplicate sends.
+
+The list is **not paginated** — for a 5,000-member guild with a bad week this can be thousands of rows. Render it virtualized, or show `targetCount` plus a preview slice.
+
+The target definition is the exact same query `POST /send` uses, so the preview cannot disagree with the send.
 
 #### 🔐 `POST /api/reminders/send`
 
-**Body**
+**Body** — a patch-like body; every period/criteria field optional except that **one of `date` or (`from` AND `to`) must be present**.
 
-| Field     | Type   | Rules                                                         |
-| --------- | ------ | ------------------------------------------------------------- |
-| `date`    | string | **required, never inferred**, `YYYY-MM-DD`, not in the future |
-| `message` | string | trimmed, 1–**1970** characters                                |
+| Field           | Type     | Rules                                                                                  |
+| --------------- | -------- | -------------------------------------------------------------------------------------- |
+| `date`          | string   | one of `date` OR (`from` AND `to`); `YYYY-MM-DD`, not in the future                    |
+| `from`          | string   | range start, inclusive, `YYYY-MM-DD`, ≤ today                                          |
+| `to`            | string   | range end, inclusive, `YYYY-MM-DD`, ≤ today, ≥ `from`, ≤ 92 days after `from`           |
+| `daysOfWeek`    | number[] | optional, range mode only, each 0–6 (0 = Sunday), no duplicates                        |
+| `criterion`     | enum     | optional, default `MISSING_UPDATE`                                                     |
+| `minMissedDays` | number   | optional, default `1`, integer ≥ 1                                                     |
+| `message`       | string   | trimmed, 1–**1970** characters                                                         |
+| `guildIds`      | string[] | optional, restrict to listed configured servers. Unknown ID is a 400 naming it.         |
 
 The 1970 cap = Discord's 2000-character limit minus the fixed heading `⚠️ **Daily Update Reminder**` the DM is wrapped in. Enforce it in the textarea with a live counter so the admin never discovers it at submit time.
 
 **202**
 
 ```jsonc
+// date mode
 {
-  "success": true,
-  "statusCode": 202,
-  "message": "Reminder broadcast queued for 412 member(s). Delivery is paced and runs in the background.",
   "data": {
     "id": "…",
-    "reminderDate": "2026-08-16",
+    "mode": "date",
+    "date": "2026-08-16",
+    "daysInRange": 1,
+    "criterion": "MISSING_UPDATE",
+    "minMissedDays": 1,
     "targetCount": 412,
     "queuedJobs": 412,
     "status": "PENDING",
-  },
+  }
+}
+
+// range mode
+{
+  "data": {
+    "id": "…",
+    "mode": "range",
+    "from": "2026-08-15",
+    "to": "2026-08-17",
+    "daysOfWeek": null,
+    "daysInRange": 3,
+    "criterion": "MISSING_BOTH",
+    "minMissedDays": 2,
+    "targetCount": 87,
+    "queuedJobs": 87,
+    "status": "PENDING",
+  }
 }
 ```
 
 **Nothing has been delivered when this returns.** Delivery is paced at `REMINDER_DM_PER_SECOND` (default 2/sec) — ~5,000 members is ~40 minutes. That pacing is deliberate: bursting DMs gets the bot banned, and the bot shares a process with member sync and the attendance form's membership check.
 
-| Status | Cause                                                                                                                   |
-| ------ | ----------------------------------------------------------------------------------------------------------------------- |
-| 400    | Zod, or **every member already submitted** — "There is nobody to remind."                                               |
-| 409    | a broadcast for that date is already `PENDING`/`PROCESSING` (double-click guard) — the message includes the existing id |
-| 503    | Redis unreachable, or the queue refused the jobs (the broadcast is auto-cancelled so the date isn't left blocked)       |
+| Status | Cause                                                                                                                                                                          |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 400    | Zod, or **nobody meets the criteria** — "There is nobody to remind."                                                                                                            |
+| 409    | a broadcast covering a day that overlaps with the requested one is already `PENDING`/`PROCESSING` — the message names the existing broadcast id and its period                |
+| 503    | Redis unreachable, or the queue refused the jobs (the broadcast is auto-cancelled so the day isn't left blocked)                                                               |
+
+**One broadcast at a time is now an OVERLAP check.** Two periods sharing any day conflict — a single date inside a running range conflicts, two ranges sharing one day conflict. The guard ignores `criterion`, `minMissedDays`, `daysOfWeek` and `guildIds`: the constraint it protects is the bot's single global DM budget, which does not care how a target list was computed. Use `POST /reminders/:id/cancel` to free a slot.
 
 **Always run the `/targets` preview first and make the admin confirm the count.** Then redirect to the progress page:
 
@@ -1734,7 +2027,16 @@ import { revalidatePath } from 'next/cache';
 import { api, ApiError } from '@/lib/api/client';
 import type { ReminderQueued } from '@/lib/api/types';
 
-export async function sendReminder(input: { date: string; message: string }) {
+export async function sendReminder(input: {
+  date?: string;
+  from?: string;
+  to?: string;
+  daysOfWeek?: number[];
+  criterion?: 'MISSING_UPDATE' | 'MISSING_BOTH';
+  minMissedDays?: number;
+  message: string;
+  guildIds?: string[];
+}) {
   let queued: ReminderQueued;
   try {
     queued = await api<ReminderQueued>('/reminders/send', {
@@ -1768,7 +2070,11 @@ export async function sendReminder(input: { date: string; message: string }) {
   "data": [
     {
       "id": "…",
-      "reminderDate": "2026-08-16",
+      "reminderStartDate": "2026-08-16",
+      "reminderEndDate": "2026-08-16",
+      "criterion": "MISSING_UPDATE",
+      "minMissedDays": 1,
+      "daysOfWeek": [],
       "message": "…",
       "targetCount": 412,
       "sentCount": 388,
@@ -1786,6 +2092,8 @@ export async function sendReminder(input: { date: string; message: string }) {
 
 `createdBy` is `null` when the admin account was deleted (the audit row survives on purpose).
 
+> ⚠️ **`reminderDate` no longer exists.** Read the period from `reminderStartDate` / `reminderEndDate` — a single-date send stores the same date at both ends.
+
 #### 🔐 `GET /api/reminders/:id` (live progress)
 
 **200**
@@ -1794,14 +2102,18 @@ export async function sendReminder(input: { date: string; message: string }) {
 {
   "data": {
     "id": "…",
-    "reminderDate": "2026-08-16",
+    "reminderStartDate": "2026-08-15",
+    "reminderEndDate": "2026-08-17",
+    "criterion": "MISSING_BOTH",
+    "minMissedDays": 2,
+    "daysOfWeek": null,
     "message": "…",
     "status": "PROCESSING",
-    "targetCount": 412,
-    "delivered": 201,
-    "dmClosed": 12,
-    "failed": 3,
-    "outstanding": 196,
+    "targetCount": 87,
+    "delivered": 41,
+    "dmClosed": 3,
+    "failed": 0,
+    "outstanding": 43,
     "startedAt": "…",
     "completedAt": null,
     "createdAt": "…",
@@ -1954,7 +2266,7 @@ A leading or trailing `_` or `.` is **valid** (`.rabbil`, `itzazad_`). Don't tig
 **Always 200**, even when the handle is unknown — "not found" is a routine answer on the read path, and the form has to render something either way.
 
 ```jsonc
-// verified, hasn't submitted
+// verified, hasn't submitted anywhere — but member of two servers
 {
   "success": true, "statusCode": 200,
   "message": "Discord username verified",
@@ -1964,7 +2276,11 @@ A leading or trailing `_` or `.` is **valid** (`.rabbil`, `itzazad_`). Don't tig
     "member": {
       "id": "…", "discordUserId": "…", "discordUsername": "rakib_",
       "displayName": "Rakib", "avatarUrl": "https://cdn.discordapp.com/…"
-    }
+    },
+    "servers": [
+      { "guildId": "146…", "label": "Batch A", "alreadySubmitted": false },
+      { "guildId": "246…", "label": "Batch B", "alreadySubmitted": true },
+    ],
   }
 }
 
@@ -1972,11 +2288,15 @@ A leading or trailing `_` or `.` is **valid** (`.rabbil`, `itzazad_`). Don't tig
 {
   "success": true, "statusCode": 200,
   "message": "This Discord username was not found in our Discord server. Please check the username, or join the server first.",
-  "data": { "verified": false, "alreadySubmitted": false, "attendanceDate": "2026-08-17", "member": null }
+  "data": { "verified": false, "alreadySubmitted": false, "attendanceDate": "2026-08-17", "member": null, "servers": [] }
 }
 ```
 
-**Branch on `data.verified`, never on the HTTP status.** `member` is always `null` when `verified` is `false` — no partial disclosure.
+- `servers[]` lists **every** configured server this handle is currently a member of, each with its own `alreadySubmitted`.
+- Top-level `alreadySubmitted` is `true` **only when every server already has today's row**. A member of two servers who submitted in one still has something to do — keep this on the form so the form knows to show "you still have to submit in Batch B".
+- `member` is always `null` when `verified` is `false` — no partial disclosure.
+
+**Branch on `data.verified`, never on the HTTP status.**
 
 A malformed handle is a **400** (Zod). The form must tell "fix your typing" (400) apart from "you're not in the server" (200 + `verified: false`).
 
@@ -2008,9 +2328,15 @@ A malformed handle is a **400** (Zod). The form must tell "fix your typing" (400
       "displayName": "Rakib",
       "avatarUrl": "…",
     },
+    "servers": [
+      { "guildId": "146…", "label": "Batch A", "recorded": true,  "alreadySubmitted": false },
+      { "guildId": "246…", "label": "Batch B", "recorded": true,  "alreadySubmitted": false },
+    ],
   },
 }
 ```
+
+The submission is recorded in **every** configured server the handle belongs to, in one transaction. The student submits once; the form does not ask them to pick a server. Each entry in `servers[]` carries `recorded` (was written by this request) and `alreadySubmitted` (was already on file from an earlier submission).
 
 | Status  | Cause                                           | Notes                                                                                        |
 | ------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------- |
@@ -2139,6 +2465,155 @@ Import history, most recent first: file name, the administrator, the time, and t
 
 There is deliberately **no** "skip the check when the roster is empty" behaviour on the submission path. The guard sits here, on the arming step, where a human reads the refusal — a gate that disarms itself under a condition nobody is watching is a gate nobody can reason about.
 
+#### The roster engagement read model — `/roster/status/*`
+
+Three endpoints surface the cohort from the **roster's** point of view: who that we enrolled is doing the work. They share a query vocabulary and are declared before `/roster/:id` for the same reason `/settings` is — Express would otherwise match `status` as an entry id.
+
+**The denominator is ENROLMENT, not Discord membership.** Roster totals will not equal dashboard totals, and that is not a bug. The dashboard counts accounts; this counts enrolled people. The gap is exactly the people in one cohort but not the other:
+
+- Enrolled but never joined a server → counted here, absent from the dashboard.
+- In a server without being on the roll → counted on the dashboard, absent here.
+
+Reconciling the two would erase a real distinction — these are different reports answering different questions.
+
+**The roster has no `guildId`, and no filter here accepts one.** Sending `guildId` is a 400 ("The roster is not scoped to a server — guildId is not a valid filter here"). Narrow by pairing state and status instead.
+
+Every endpoint here accepts **either** a single `date` **or** a `from`/`to` pair, with the same rules as the dashboard's range mode — see §5A. The span caps at **92 days**; a weekday set matching no day is a 400 with the same message the dashboard uses.
+
+#### 🔐 `GET /api/roster/status/counts`
+
+The seven-figure overview for a date or a range.
+
+**Date mode:**
+
+| Query  | Type   | Rules                       |
+| ------ | ------ | --------------------------- |
+| `date` | string | required, `YYYY-MM-DD`      |
+
+**Range mode:** `from`, `to`, `daysOfWeek` (same rules as the dashboard).
+
+**200**
+
+```jsonc
+// date mode
+{
+  "data": {
+    "meta": { "mode": "date", "date": "2026-08-18" },
+    "counts": {
+      "date": "2026-08-18",
+      "from": null, "to": null, "daysInRange": null,
+      "enrolled": 2140,
+      "paired": 1872,
+      "unpaired": 268,
+      "bothComplete": 1102,
+      "missingUpdateOnly": 482,
+      "missingAttendanceOnly": 88,
+      "missingBoth": 200,
+    },
+  }
+}
+
+// range mode
+{
+  "data": {
+    "meta": {
+      "mode": "range",
+      "from": "2026-08-15",
+      "to": "2026-08-17",
+      "daysOfWeek": null,
+      "daysInRange": 3,
+    },
+    "counts": {
+      "date": null,
+      "from": "2026-08-15",
+      "to": "2026-08-17",
+      "daysInRange": 3,
+      "enrolled": 2140,
+      "paired": 1872,
+      "unpaired": 268,
+      "allComplete": 980,
+      "partial": 612,
+      "none": 280,
+      "attendanceDays": 5040,
+      "updateDays": 4120,
+      "completeDays": 3940,
+      "missedBothDays": 2480,
+    },
+  }
+}
+```
+
+> ⚠️ **Roster totals do not equal dashboard totals.** Compare against `GET /api/daily-status/counts` for the same day and they will differ; that is two different questions answered by two different denominators, not a bug.
+
+Range-mode person-day totals (`attendanceDays`, `updateDays`, `completeDays`, `missedBothDays`) count **person-days**, not people, and are named differently from the date-mode figures on purpose.
+
+#### 🔐 `GET /api/roster/status`
+
+Paginated listing of enrolled entries with their engagement state. **One row per enrolled person** — paired or not.
+
+| Query          | Type     | Rules                                                                                              |
+| -------------- | -------- | -------------------------------------------------------------------------------------------------- |
+| `date`         | string   | one of `date` OR (`from` AND `to`)                                                                 |
+| `from`         | string   | range start, inclusive                                                                             |
+| `to`           | string   | range end, inclusive                                                                               |
+| `daysOfWeek`   | number[] | range mode only, each 0–6 (0 = Sunday), no duplicates                                              |
+| `pairingState` | enum     | optional, `all` (default), `paired`, or `unpaired`                                                 |
+| `status`       | enum     | optional, one of `COMPLETE`, `MISSING_UPDATE`, `MISSING_ATTENDANCE`, `MISSING_BOTH`, `NEVER_LINKED` |
+| `search`       | string   | optional, case-insensitive partial match on **name or email**                                      |
+| `sortBy`       | enum     | optional, `name`, `email`, `status`, `linkedAt` (unknown values fall back to `name`)               |
+| `sortDir`      | enum     | optional, `asc` or `desc` (default `asc`)                                                          |
+| `page`         | number   | default `1`, ≥ 1                                                                                   |
+| `limit`        | number   | default `50`, 1–200                                                                                |
+
+**200** — date mode:
+
+```jsonc
+{
+  "meta": { "page": 1, "limit": 50, "total": 2140, "mode": "date", "date": "2026-08-18" },
+  "data": [
+    {
+      "entryId": "…",
+      "name": "Rakibul Hasan",
+      "email": "rakib@example.com",
+      "phone": "01711000000",
+      "isActive": true,
+      "discordUserId": "123456789012345678",
+      "linkedAt": "2026-08-01T10:00:00.000Z",
+      "servers": [{ "guildId": "146…", "label": "Batch A" }],
+      "serverCount": 1,
+      "discordUsername": "rakib_dev",
+      "displayName": "Rakib",
+      "isInGuild": true,
+      "hasAttendance": true,
+      "hasDailyUpdate": false,
+      "status": "MISSING_UPDATE",
+    },
+  ],
+}
+```
+
+**200** — range mode: same shape, but `status` is one of `ALL_COMPLETE` / `PARTIAL` / `NONE` / `NEVER_LINKED`, plus per-day counts:
+
+| Field              | Meaning                                                                 |
+| ------------------ | ----------------------------------------------------------------------- |
+| `daysInRange`      | Counted days — the denominator of everything below.                     |
+| `attendanceDays`   | Days the person submitted the attendance form.                          |
+| `updateDays`       | Days they posted a daily update, in any server.                         |
+| `completeDays`     | Days they did **both**.                                                 |
+| `incompleteDays`   | `daysInRange - completeDays` — days not fully done.                     |
+| `missedBothDays`   | Days they did **neither**.                                              |
+| `missedUpdateDays` | Days with no daily update, whatever attendance says.                    |
+
+Unpaired entries have `discordUserId: null`, empty `servers`, and `status: "NEVER_LINKED"` (date mode) or `rangeStatus: "NEVER_LINKED"` (range mode). The roster cannot reach them on Discord; outreach happens by email outside this system.
+
+#### 🔐 `GET /api/roster/status/export`
+
+CSV attachment with the same query surface as the listing (minus paging — the export streams every match). Filenames include the period: `roster-status-2026-08-18.csv` for a date, `roster-status-2026-08-15_to_2026-08-17.csv` for a range. Columns are the listing's row fields plus `daysInRange`/`attendanceDays`/`updateDays`/`completeDays`/`incompleteDays`/`missedBothDays`/`missedUpdateDays`/`rangeStatus` for range mode.
+
+| Status | Cause                       | Notes                                                                                |
+| ------ | --------------------------- | ------------------------------------------------------------------------------------ |
+| 501    | `format=xlsx`               | "XLSX export format is not supported yet. Please use format=csv." — same refusal the daily-status export uses |
+
 ---
 
 ### 8.7 Attendance announcement — `/api/announcement`
@@ -2187,15 +2662,59 @@ No parameters. The row is created lazily on first read (the current Bangla messa
       "lastOutcome": null,
     },
     "channel": { "id": "1467526520347037729" },
-    "today": { "date": "2026-08-18", "posted": false, "attempts": [] },
+    "today": {
+      "date": "2026-08-18",
+      "posted": true,
+      "servers": [
+        {
+          "guildId": "146…",
+          "label": "Batch A",
+          "channelId": "1467526520347037729",
+          "posted": true,
+          "lastOutcome": { "status": "posted", "trigger": "SCHEDULED", "at": "2026-08-18T13:00:00.000Z" },
+          "attempts": [
+            {
+              "attempt": 1,
+              "status": "POSTED",
+              "trigger": "SCHEDULED",
+              "discordMessageId": "1234567890123456789",
+              "unresolvedTargets": [],
+              "error": null,
+              "createdAt": "2026-08-18T13:00:01.000Z",
+              "updatedAt": "2026-08-18T13:00:04.000Z",
+            },
+          ],
+        },
+        {
+          "guildId": "246…",
+          "label": "Batch B",
+          "channelId": "246…",
+          "posted": false,
+          "lastOutcome": { "status": "failed", "error": "Missing permission: Send Messages", "at": "2026-08-18T13:00:02.000Z" },
+          "attempts": [
+            {
+              "attempt": 1,
+              "status": "FAILED",
+              "trigger": "SCHEDULED",
+              "discordMessageId": null,
+              "unresolvedTargets": [],
+              "error": "Missing permission: Send Messages",
+              "createdAt": "2026-08-18T13:00:01.000Z",
+              "updatedAt": "2026-08-18T13:00:02.000Z",
+            },
+          ],
+        },
+      ],
+    },
   },
 }
 ```
 
 - **`template.body` is the raw text with placeholders unexpanded — that is what the editor binds to.** `preview.content` is the same body rendered against today's live values plus the mention line, i.e. exactly what students would read. Never show `preview.content` in an editable field; a round-trip would bake today's date into the stored template.
 - **`preview.closeTime` is read from the `#daily-update` schedule** (§8.4), not stored here. Changing the close time there changes this message without anyone editing it. That is the whole point — don't offer a close-time field on this screen.
-- `today.posted` and `today.attempts` are how you show "sent today ✓". An attempt stuck in `SENDING` means a crash between the claim and the post; a forced send (below) recovers it.
+- `today.posted` is `true` only when **every** configured server has today's message; `today.servers[]` reports each server individually so a silent server cannot hide behind a single green flag. An attempt stuck in `SENDING` means a crash between the claim and the post; a forced send (below) recovers it.
 - **`scheduler.lastOutcome` is where a missing `Send Messages` permission shows up.** Surface it — the only other symptom is a channel that quietly stops being announced in.
+- `channel.id` is reported per server under `today.servers[].channelId`; the top-level `channel` shape is deprecated and only kept for clients still binding to it.
 - There is deliberately **no boot reconcile**: a missed announcement is never posted late. If `today.posted` is false after `nextRunAt` has passed, that day needs a manual send.
 - Costs no Discord API call for the channel state (unlike §8.4), but it **does** resolve mention targets, so don't poll it tightly.
 
@@ -2272,27 +2791,70 @@ Renders against today's live values and **stores nothing**. Use it for the live 
 
 #### 🔐 `POST /api/announcement/attendance/send`
 
-**Body** — `{ force?: boolean }` (defaults to `false`).
+**Body** — `{ force?: boolean, guildIds?: string[] }` (both default to absent).
+
+| Field      | Type      | Rules                                                                                       |
+| ---------- | --------- | ------------------------------------------------------------------------------------------- |
+| `force`    | boolean   | default `false`; only escape from the once-per-day claim                                    |
+| `guildIds` | string[]  | optional, each a 17–20 digit snowflake; restricts the send to named configured servers. Omit to target every configured server. `[]` is rejected — pass nothing instead. |
 
 Posts **immediately**, leaving the stored schedule untouched. Works on every process, including one where `SCHEDULER_ENABLED=false`.
 
 **It also opens `#daily-update` in the servers it posted to.** The message tells students to submit and the window is what lets them, so one click does both — a send that announced a window nobody could post in would be worse than no send.
 
-**200** → `data: AnnouncementSendResult`.
+**200** → `data: AnnouncementSendResult`:
+
+```jsonc
+{
+  "data": {
+    "announcementDate": "2026-08-18",
+    "summary": {
+      "total": 2,
+      "posted": 1,
+      "failed": 1,
+      "alreadySent": 0,
+    },
+    "servers": [
+      {
+        "guildId": "146…", "label": "Batch A",
+        "status": "posted",
+        "discordMessageId": "1234567890123456789",
+        "unresolvedTargets": [],
+      },
+      {
+        "guildId": "246…", "label": "Batch B",
+        "status": "failed",
+        "missingPermission": "SendMessages",
+        "error": "Missing permission: Send Messages",
+      },
+    ],
+    "channel": {
+      "opened": ["146…"],
+      "alreadyOpen": [],
+      "failed": [{ "guildId": "246…", "label": "Batch B", "error": "Missing permission: Manage Roles" }],
+      "locksAt": "23:59",
+    },
+  },
+}
+```
+
+`summary` totals the per-server outcomes and the message line under `success` switches between two forms (`"Attendance announcement posted"` when `summary.posted === summary.total`, otherwise `"Attendance announcement posted to N of M server(s)"`) so the admin can see the partial from the toast alone.
 
 | Status | Cause                                                                                              |
 | ------ | -------------------------------------------------------------------------------------------------- |
-| 409    | today is already posted — the message names the earlier post's time and attempt                    |
-| 403    | the bot lacks `Send Messages` on the attendance channel — the failure does **not** consume the day |
-| 503    | the bot is not connected, or Discord refused the message for another reason                        |
+| 409    | every targeted server already posted today — `{ "force": true }` is the only way past it          |
+| 403    | the bot lacks `Send Messages` on the attendance channel of **every** targeted server              |
+| 503    | no configured server has a verified attendance channel, the bot is not connected, or every server failed |
 
-- **At most one post per Dhaka day**, enforced by a database claim rather than by timing — a double-clicked button gets the 409, not a second message. `{ "force": true }` is the only way to post twice in one day and files the second one as the next `attempt`.
-- **A failed send does not consume the day.** After fixing a permission, retry plainly; no `force` needed.
-- This is **outward-facing and irreversible** — potentially a mass mention to thousands of students. Put it behind a confirmation dialog that shows `preview.content` and, when `mentionEveryone` is on, says so explicitly.
+- **At most one post per Dhaka day, per server**, enforced by a database claim rather than by timing — a double-clicked button gets the 409, not a second message. `{ "force": true }` is the only way to post twice in one day and files the second one as the next `attempt`.
+- **A failed send does not consume the day** for that server. After fixing a permission, retry plainly; no `force` needed.
+- This is **outward-facing and irreversible** — potentially a mass mention to thousands of students. Put it behind a confirmation dialog that shows `preview.content` and, when `mentionEveryone` is on, says so explicitly. The same dialog should surface the target server set (`guildIds` if supplied, otherwise every configured server) so a wrong list is caught before clicking.
+- **Partial success is a 200, not an error.** Posting really did happen somewhere, and answering an error would invite a retry that re-posts nothing while looking like the fix. Inspect `data.servers[]` and `data.summary.failed` to render the warning next to the success.
 - **Read `data.channel` after every send.** `opened` is where the window was opened, `alreadyOpen` is where it already was (skipped, so a forced second send does not post a second "Channel is OPEN" embed), and `failed` is where the announcement went out but the channel did **not** open — usually a missing `Manage Roles`, and worth showing as a warning next to the success, since those students can read the message and cannot act on it.
 - **`channel.locksAt` is `null` when the channel schedule is disabled**, meaning no lock job is registered and the window this send opened will stay open past midnight — where a post lands on the _next_ day's record. Surface it: the admin has to lock it by hand at `POST /api/schedule/daily-update/lock`.
 - Only servers this run **posted** to are opened. A server whose post failed was never told to submit, and one that answered `already-sent` was opened when that earlier post went out.
 - The stored open time is **not** changed. A send at 20:30 is a moment, not a new schedule; tomorrow still opens at `announceTime`.
+- An unknown ID in `guildIds` is a 400 naming every invalid ID. `GET /api/discord/servers` lists the configured ones.
 
 ---
 
@@ -2300,21 +2862,21 @@ Posts **immediately**, leaving the stored schedule untouched. Works on every pro
 
 All routes 🔐. These endpoints feed the admin daily status dashboard, member status table, member history dialog, and CSV export.
 
-#### 🔐 `GET /api/daily-status/counts?date=YYYY-MM-DD`
+#### 🔐 `GET /api/daily-status/counts`
 
-Summary overview figures for a given Asia/Dhaka civil date.
+**Date mode:**
 
-| Query  | Type   | Rules                                           |
-| ------ | ------ | ----------------------------------------------- |
-| `date` | string | **required**, `YYYY-MM-DD`, valid calendar date |
+| Query     | Type   | Rules                                       |
+| --------- | ------ | ------------------------------------------- |
+| `date`    | string | required, `YYYY-MM-DD`, valid calendar date |
+| `guildId` | string | optional, restrict to one configured server |
 
-**200**
+**Range mode:** `from`, `to`, `daysOfWeek` (same rules as §5A). `from`/`to` are mutually exclusive with `date`; sending both, or only one half, is a 400.
+
+**200** — date mode:
 
 ```jsonc
 {
-  "success": true,
-  "statusCode": 200,
-  "message": "Daily status counts retrieved successfully",
   "data": {
     "date": "2026-08-18",
     "totalMembers": 5187,
@@ -2324,40 +2886,90 @@ Summary overview figures for a given Asia/Dhaka civil date.
     "missingUpdateOnly": 1520,
     "missingAttendanceOnly": 200,
     "missingBoth": 667,
+    "byServer": [
+      {
+        "guildId": "146…", "label": "Batch A",
+        "totalMembers": 3000, "attendanceSubmitted": 2510,
+        "dailyUpdateSubmitted": 1700, "bothComplete": 1600,
+        "missingUpdateOnly": 910, "missingAttendanceOnly": 120, "missingBoth": 370,
+      },
+      {
+        "guildId": "246…", "label": "Batch B",
+        "totalMembers": 2400, "attendanceSubmitted": 1900,
+        "dailyUpdateSubmitted": 1450, "bothComplete": 1320,
+        "missingUpdateOnly": 640, "missingAttendanceOnly": 95,  "missingBoth": 345,
+      },
+    ],
+  },
+}
+```
+
+**200** — range mode:
+
+```jsonc
+{
+  "data": {
+    "mode": "range",
+    "from": "2026-08-15",
+    "to": "2026-08-17",
+    "daysOfWeek": null,
+    "daysInRange": 3,
+    "totalMembers": 5187,
+    "allCompleteMembers": 2100,
+    "partialMembers": 2200,
+    "noneMembers": 887,
+    "attendanceDays": 13000,
+    "updateDays": 9800,
+    "completeDays": 9100,
+    "missedBothDays": 6450,
+    "byServer": [
+      {
+        "guildId": "146…", "label": "Batch A",
+        "totalMembers": 3000, "allCompleteMembers": 1180,
+        "partialMembers": 1320, "noneMembers": 500,
+        "attendanceDays": 7600, "updateDays": 5600,
+        "completeDays": 5200, "missedBothDays": 3800,
+      },
+      { "guildId": "246…", "label": "Batch B", "…" },
+    ],
   },
 }
 ```
 
 - Every count is guaranteed to be a JSON **number**, not a bigint.
-- Invariant: `bothComplete + missingUpdateOnly + missingAttendanceOnly + missingBoth === totalMembers`.
+- Date-mode invariant: `bothComplete + missingUpdateOnly + missingAttendanceOnly + missingBoth === totalMembers`. Range-mode invariant: `allCompleteMembers + partialMembers + noneMembers === totalMembers`.
+- Person-day totals in range mode scale with the span and are **named differently** from the date-mode figures on purpose — they count person-days, not people.
+- > ⚠️ **`byServer` does NOT sum to the combined totals.** Combined figures count people; `byServer` counts memberships. The difference is exactly the number of people in more than one server. Show them as two separate readings, not as a total and its parts.
+- An unknown `guildId` is a 400 naming it.
 - **Past dates work.** The frontend 7-day trend chart calls this endpoint 7 times in parallel for historical days.
 
-#### 🔐 `GET /api/daily-status?date=YYYY-MM-DD&page=1&limit=50&status=&search=`
+#### 🔐 `GET /api/daily-status`
 
-Paginated list of active guild members and their attendance/daily update status for a given date.
+Paginated per-person status list.
 
-| Query    | Type   | Rules                                                                                 |
-| -------- | ------ | ------------------------------------------------------------------------------------- |
-| `date`   | string | **required**, `YYYY-MM-DD`, valid calendar date                                       |
-| `page`   | number | optional, integer ≥ 1, default `1`                                                    |
-| `limit`  | number | optional, integer 1–200, default `50`                                                 |
-| `status` | enum   | optional: `COMPLETE` \| `MISSING_UPDATE` \| `MISSING_ATTENDANCE` \| `MISSING_BOTH`    |
-| `search` | string | optional, case-insensitive partial search on name, phone, email, or `discordUsername` |
+| Query               | Type       | Rules                                                                                          |
+| ------------------- | ---------- | ---------------------------------------------------------------------------------------------- |
+| `date`              | string     | one of `date` OR (`from` AND `to`)                                                             |
+| `from`              | string     | range start, inclusive                                                                         |
+| `to`                | string     | range end, inclusive                                                                           |
+| `daysOfWeek`        | number[]   | range mode only, each 0–6 (0 = Sunday)                                                         |
+| `guildId`           | string     | optional, restrict to one configured server                                                    |
+| `page`              | number     | default `1`, integer ≥ 1                                                                       |
+| `limit`             | number     | default `50`, integer 1–200                                                                    |
+| `status`            | enum       | date mode only: `COMPLETE` \| `MISSING_UPDATE` \| `MISSING_ATTENDANCE` \| `MISSING_BOTH`       |
+| `rangeStatus`       | enum       | range mode only: `ALL_COMPLETE` \| `PARTIAL` \| `NONE`                                        |
+| `minMissedBothDays` | number     | range mode only, integer ≥ 1 — keep only accounts with at least this many `missedBothDays`     |
+| `search`            | string     | optional, case-insensitive partial on name, phone, email, or `discordUsername`                 |
+| `sortBy`            | enum       | range mode only: `name` \| `missedBothDays` \| `completeDays` \| `rangeStatus` (default `name`) |
+| `sortDir`           | enum       | range mode only: `asc` \| `desc` (default `asc`)                                              |
 
-`status` and `search` combine (AND), applied before pagination.
+Using the wrong status filter for the current mode (`status` in range mode, or `rangeStatus` in date mode) is a 400 — never silently ignored.
 
-**200**
+**200** — date mode:
 
 ```jsonc
 {
-  "success": true,
-  "statusCode": 200,
-  "message": "Daily status retrieved successfully",
-  "meta": {
-    "page": 1,
-    "limit": 50,
-    "total": 1520,
-  },
+  "meta": { "page": 1, "limit": 50, "total": 1520 },
   "data": [
     {
       "memberId": "cm1234567890",
@@ -2371,30 +2983,50 @@ Paginated list of active guild members and their attendance/daily update status 
       "hasDailyUpdate": false,
       "status": "MISSING_UPDATE",
       "attendanceSubmittedAt": "2026-08-18T14:22:31.000Z",
+      "servers": [{ "guildId": "146…", "label": "Batch A" }],
+      "serverCount": 1,
+      "memberIds": ["cm1234567890"],
     },
   ],
 }
 ```
 
-- `meta.total` is the **filtered** row count (matching the active search/status filters), driving the UI pager.
+**200** — range mode: each row replaces `status`/`hasAttendance`/`hasDailyUpdate` with:
 
-#### 🔐 `GET /api/daily-status/members/:memberId?date=YYYY-MM-DD`
+| Field              | Meaning                                                                 |
+| ------------------ | ----------------------------------------------------------------------- |
+| `daysInRange`      | Counted days — the denominator of everything below.                     |
+| `attendanceDays`   | Days the person submitted the attendance form.                          |
+| `updateDays`       | Days they posted a daily update, in any server.                         |
+| `completeDays`     | Days they did **both**.                                                 |
+| `incompleteDays`   | `daysInRange - completeDays` — days not fully done.                     |
+| `missedBothDays`   | Days they did **neither**.                                              |
+| `missedUpdateDays` | Days with no daily update, whatever attendance says.                    |
+| `rangeStatus`      | `ALL_COMPLETE` / `PARTIAL` / `NONE`.                                    |
 
-Detailed status for a specific member on a given date, including their posted `#daily-update` messages.
+> ⚠️ **`incompleteDays` and `missedBothDays` are different numbers.** Someone who submits attendance every day and never posts an update has `incompleteDays = daysInRange` and `missedBothDays = 0`. The reminder threshold acts on **`missedBothDays`**, so show that column wherever an admin is about to choose a threshold. There is deliberately no field called `missedDays`.
 
-| Param      | Type   | Rules                                           |
-| ---------- | ------ | ----------------------------------------------- |
-| `memberId` | string | **required**, member CUID/ID                    |
-| `date`     | string | **required**, `YYYY-MM-DD`, valid calendar date |
+`meta.total` is the **filtered** row count (matching the active search/status filters), driving the UI pager. Within a `guildId`-filtered view, `servers.length` may be 1 while `serverCount` is 2 — the latter is the total membership, never narrowed.
 
-**200**
+#### 🔐 `GET /api/daily-status/members/:memberId`
+
+Detailed status for a specific member, including their posted `#daily-update` messages. Like the listing, this endpoint accepts either a single date or a range; the resolved period is echoed in the response so the caller never has to infer the mode.
+
+| Param      | Type      | Rules                                                                              |
+| ---------- | --------- | ---------------------------------------------------------------------------------- |
+| `memberId` | string    | **required** path, member CUID/ID — any one record for the account, the rest is resolved from it |
+| `date`     | string    | one of `date` OR (`from` AND `to`), same rules as §8.8 listing                      |
+| `from`     | string    | range start, inclusive                                                              |
+| `to`       | string    | range end, inclusive                                                                |
+| `daysOfWeek` | number[] | range mode only, each 0–6 (0 = Sunday)                                             |
+
+**200** — date mode:
 
 ```jsonc
 {
-  "success": true,
-  "statusCode": 200,
-  "message": "Member daily status retrieved successfully",
   "data": {
+    "mode": "date",
+    "date": "2026-08-18",
     "memberId": "cm1234567890",
     "discordUserId": "123456789012345678",
     "discordUsername": "rakib_dev",
@@ -2406,40 +3038,94 @@ Detailed status for a specific member on a given date, including their posted `#
     "hasDailyUpdate": true,
     "status": "COMPLETE",
     "attendanceSubmittedAt": "2026-08-18T14:22:31.000Z",
+    "servers": [{ "guildId": "146…", "label": "Batch A" }, { "guildId": "246…", "label": "Batch B" }],
+    "serverCount": 2,
+    "memberIds": ["cm1234567890", "cm0987654321"],
     "messages": [
       {
         "id": "cmupdate123",
         "content": "Today I implemented the public window endpoint.",
         "postedAt": "2026-08-18T18:40:12.000Z",
+        "guildId": "146…",
+        "serverLabel": "Batch A",
       },
     ],
   },
 }
 ```
 
-- `messages: []` when no messages were posted on that date.
-- **404** if `memberId` is not found.
+**200** — range mode: replaces `status`/`hasAttendance`/`hasDailyUpdate` with the same per-day figures as the listing (see §8.8 `/api/daily-status` table), and adds two top-level arrays:
 
-#### 🔐 `GET /api/daily-status/export?date=YYYY-MM-DD&status=&search=&format=csv`
+| Field       | Type                  | Meaning                                                                              |
+| ----------- | --------------------- | ------------------------------------------------------------------------------------ |
+| `days`      | `DailyStatusRangeDay[]` | One entry per counted day, with that day's `status` and `hasAttendance`/`hasDailyUpdate`. Reconciles with `completeDays`/`missedBothDays`. |
+| `messages`  | array                 | Every message posted in the range, across every server, as one ordered timeline. Each entry names the server it came from (`guildId` + `serverLabel`). |
 
-Exports filtered daily status rows as a direct file attachment.
+`meta` is omitted in the detail view — the period echoes are top-level on `data` for parity with `getCounts`.
 
-| Query    | Type   | Rules                                           |
-| -------- | ------ | ----------------------------------------------- |
-| `date`   | string | **required**, `YYYY-MM-DD`, valid calendar date |
-| `status` | enum   | optional, same filter as table                  |
-| `search` | string | optional, same search as table                  |
-| `format` | string | optional, `csv` (default)                       |
+- `servers` is the **filtered** list (narrowed by any active `guildId`); `serverCount` is the **unfiltered** total so a single-server view still shows the person is also elsewhere.
+- `memberIds` lists every member record for this account, aligned with `servers`. Use it to look up per-server data; never derive server membership from a single `memberId`.
+- Messages posted in this person's other server **do** appear — the read is over `memberIds`, not the path parameter.
+- `messages: []` when nothing was posted in the period (or on the date).
+- **404** if `memberId` does not resolve to any account.
 
-**200** (File attachment)
+#### 🔐 `GET /api/daily-status/export`
+
+Exports filtered daily status rows as a direct file attachment. Accepts the same `date` XOR `from`/`to` period as the listing; the date form keeps the original column set and the range form gets the per-day figures.
+
+| Query               | Type     | Rules                                                                |
+| ------------------- | -------- | -------------------------------------------------------------------- |
+| `date`              | string   | one of `date` OR (`from` AND `to`), same rules as §8.8 listing       |
+| `from`              | string   | range start, inclusive                                               |
+| `to`                | string   | range end, inclusive                                                 |
+| `daysOfWeek`        | number[] | range mode only                                                      |
+| `guildId`           | string   | optional, restrict to one configured server                         |
+| `status`            | enum     | date mode only, same filter as table                                 |
+| `rangeStatus`       | enum     | range mode only: `ALL_COMPLETE` \| `PARTIAL` \| `NONE`              |
+| `minMissedBothDays` | number   | range mode only, integer ≥ 1 — same filter as table                  |
+| `search`            | string   | optional, same search as table                                       |
+| `format`            | string   | optional, `csv` (default). **`xlsx` returns 501 Not Implemented.**   |
+
+**200** — date mode (file attachment):
 
 ```
 Content-Type: text/csv; charset=utf-8
 Content-Disposition: attachment; filename="daily-status-2026-08-18.csv"
 ```
 
-- Streams batches of rows to support exporting thousands of members without memory exhaustion.
+**200** — range mode (file attachment):
+
+```
+Content-Type: text/csv; charset=utf-8
+Content-Disposition: attachment; filename="daily-status-2026-08-15_to_2026-08-17.csv"
+```
+
+When `guildId` is supplied the server's display label is folded into the filename (label-safe characters only) so two downloads of overlapping periods for different servers do not overwrite each other:
+
+```
+Content-Disposition: attachment; filename="daily-status-2026-08-15_to_2026-08-17-Batch-A.csv"
+```
+
+**Columns** — date mode (one row per person):
+
+```
+servers, discordUsername, displayName, name, phone, email,
+status, hasAttendance, hasDailyUpdate, attendanceSubmittedAt
+```
+
+**Columns** — range mode (one row per person):
+
+```
+servers, discordUsername, displayName, name, phone, email,
+rangeStatus, daysInRange, attendanceDays, updateDays, completeDays,
+incompleteDays, missedBothDays, missedUpdateDays, lastAttendanceSubmittedAt
+```
+
+The leading `servers` cell joins every server the person is in with `" | "` (one row per person, never one row per server membership). Filtering by `guildId` does **not** narrow this column to one entry — it narrows which **people** appear, and that person's full server list is preserved for context.
+
+- Streams batches of 500 rows so thousands of accounts export without memory pressure.
 - Escapes spreadsheet formula injection by prepending `'` to values starting with `=`, `+`, `-`, or `@`.
+- `format=xlsx` is **501 Not Implemented** in both modes; see §13.
 
 ---
 
@@ -2806,4 +3492,18 @@ Print this next to the monitor.
 - [ ] Don't auto-retry `POST /submit` — 5 per 15 min per IP is the entire budget.
 - [ ] Surface `dailyUpdate.ingestionEnabled === false`, `lastSync.guardTripped`, `scheduler.lastRun.error`, `lastFallback.missingPermission`, and the announcement's `scheduler.lastOutcome` — each is an otherwise-invisible outage.
 - [ ] `DM_CLOSED` is not a failure; label it "DMs closed — mentioned in channel".
+- [ ] `today.posted` on the announcement is `true` only when **every** server posted. Always inspect `today.servers[]`; a single green flag hides a silent server.
+- [ ] Fan-out endpoints (`POST /discord/sync`, `POST /schedule/daily-update/open|lock`, `POST /announcement/attendance/send`, `POST /reminders/send`) accept `{ guildId }` or `{ guildIds: [] }` to scope the work to a subset of servers. Omit to target every configured one.
+- [ ] Fan-out is partial-success-200. `data.summary` (or `data.*` shaped envelope) carries per-server outcomes — a single green flag is not a sign of total success.
+- [ ] Multi-guild endpoints that **return** a `servers[]` or `byServer[]` array are memberships, not people; they do **not** sum to the top-level totals when anyone is in two servers.
+- [ ] Daily-status range mode is `from`+`to` XOR `date`. Send only one, or the schema rejects it.
+- [ ] Range mode filtering is its own filter set: `rangeStatus` (`ALL_COMPLETE`/`PARTIAL`/`NONE`) and `minMissedBothDays` are range-only; `status` (`COMPLETE`/`MISSING_*`) is date-only. Sending the wrong one for the active mode is a 400.
+- [ ] Range mode sorting is its own sort set: `name` | `missedBothDays` | `completeDays` | `rangeStatus`. Date mode has no `sortBy`/`sortDir`.
+- [ ] `incompleteDays` and `missedBothDays` are different numbers. The reminder threshold acts on `missedBothDays` — never read from `incompleteDays` when choosing a threshold.
+- [ ] Roster engagement totals do **not** equal dashboard daily-status totals — the roster only includes enrolled students who paired a Discord account; unpaired enrollees show as `NEVER_LINKED` on `/roster/status/*` and never appear on `/api/daily-status*`.
+- [ ] Range spans are capped at 92 days in §5A. Pick a narrower `daysOfWeek` or shorter `from`/`to` rather than widening past it.
+- [ ] `format=xlsx` on `/api/daily-status/export` (any mode) and on `/api/roster/status/export` returns 501 Not Implemented. Use `format=csv` (the default).
+- [ ] `/api/reminders/targets` and `/api/reminders/send` take a `criterion` (`missedBothDays` | `missedUpdateDays` | `missedAttendanceDays` | `neverPosted` | `neverAttended`) with optional `minMissedDays` and range `daysOfWeek` — the date-only `reminderDate` shape is gone.
+- [ ] `GET /api/reminders/:id/recipients` is paginated by default (50/page). Use `meta.total` for the count, not `data.length`.
+- [ ] `/api/roster/status/*` periods and `?status=NEVER_LINKED` are the only way to find people whose Discord account never linked. They never appear in `/api/daily-status` because there is no member record to attribute their attendance to.
 - [ ] A `CANCELLED` broadcast's `outstanding` recipients were **never attempted**, not failed.

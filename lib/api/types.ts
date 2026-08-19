@@ -966,3 +966,151 @@ export type UpdateRosterSettingsInput = {
   enforceEmail: boolean;
 };
 
+// ── Roster engagement (API_INTEGRATION.md §8.6A "The roster engagement read model") ──
+
+/** The denominator is ENROLMENT, not Discord membership. Roster totals will not
+ *  equal dashboard totals — that is two different questions, not a bug. */
+export type RosterStatus =
+  | "COMPLETE"
+  | "MISSING_UPDATE"
+  | "MISSING_ATTENDANCE"
+  | "MISSING_BOTH"
+  | "NEVER_LINKED";
+
+export type RosterRangeStatus = "ALL_COMPLETE" | "PARTIAL" | "NONE" | "NEVER_LINKED";
+
+export type RosterPairingState = "all" | "paired" | "unpaired";
+
+/** `entryId` is the roster row's id; `discordUserId` is the linked account (or
+ *  `null` when unpaired). Paired and unpaired rows both appear — the list is
+ *  one row per enrolled person, never per server membership. */
+export type RosterStatusEntryBase = {
+  entryId: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  isActive: boolean;
+  /** `null` for unpaired enrollees — outreach happens by email outside this system. */
+  discordUserId: string | null;
+  linkedAt: string | null;
+  /** The roster does not have a `guildId`: it is global, not per server. */
+  servers: ServerRef[];
+  /** How many configured servers hold the account. Always the unfiltered total. */
+  serverCount: number;
+  /** Discord account details, or `null` when the entry is unpaired. */
+  discordUsername: string | null;
+  displayName: string | null;
+  /** Whether the linked account is currently in the guild right now. */
+  isInGuild: boolean | null;
+};
+
+export type RosterStatusDateEntry = RosterStatusEntryBase & {
+  hasAttendance: boolean;
+  hasDailyUpdate: boolean;
+  /** Unpaired enrollees read `NEVER_LINKED`, never one of the four buckets. */
+  status: RosterStatus;
+};
+
+export type RosterStatusRangeEntry = RosterStatusEntryBase & {
+  /** Counted days — the denominator of everything below. */
+  daysInRange: number;
+  attendanceDays: number;
+  /** Days they posted a daily update, in **any** server. */
+  updateDays: number;
+  completeDays: number;
+  /** `daysInRange - completeDays`. */
+  incompleteDays: number;
+  /** Neither attendance nor an update. The reminder threshold acts on this. */
+  missedBothDays: number;
+  missedUpdateDays: number;
+  /** Unpaired enrollees read `NEVER_LINKED`, never `ALL_COMPLETE`/`PARTIAL`/`NONE`. */
+  rangeStatus: RosterRangeStatus;
+};
+
+export type RosterStatusEntry = RosterStatusDateEntry | RosterStatusRangeEntry;
+
+export function isRosterRangeEntry(
+  entry: RosterStatusEntry,
+): entry is RosterStatusRangeEntry {
+  return "rangeStatus" in entry;
+}
+
+export type RosterStatusSortBy = "name" | "email" | "status" | "linkedAt";
+
+export type RosterStatusQuery = {
+  /** Exactly one of `date` or the `from`/`to` pair — sending both is a 400. */
+  date?: string;
+  from?: string;
+  to?: string;
+  daysOfWeek?: number[];
+  pairingState?: RosterPairingState;
+  /** Date mode only. */
+  status?: RosterStatus;
+  search?: string;
+  sortBy?: RosterStatusSortBy;
+  sortDir?: "asc" | "desc";
+  page?: number;
+  limit?: number;
+};
+
+/** Date-mode counts: enrolled / paired / unpaired + the four-bucket rollup. */
+export type RosterStatusDateFigures = {
+  enrolled: number;
+  paired: number;
+  unpaired: number;
+  bothComplete: number;
+  missingUpdateOnly: number;
+  missingAttendanceOnly: number;
+  missingBoth: number;
+};
+
+/** Range-mode counts are person-day totals, named differently on purpose. */
+export type RosterStatusRangeFigures = {
+  enrolled: number;
+  paired: number;
+  unpaired: number;
+  allComplete: number;
+  partial: number;
+  none: number;
+  attendanceDays: number;
+  updateDays: number;
+  completeDays: number;
+  missedBothDays: number;
+};
+
+export type RosterStatusDateCountsPayload = {
+  meta: {
+    mode: "date";
+    date: string;
+    from?: string;
+    to?: string;
+    daysInRange?: number;
+    daysOfWeek?: number[] | null;
+  };
+  counts: RosterStatusDateFigures;
+};
+
+export type RosterStatusRangeCountsPayload = {
+  meta: {
+    mode: "range";
+    date?: string;
+    from: string;
+    to: string;
+    daysInRange?: number;
+    daysOfWeek?: number[] | null;
+  };
+  counts: RosterStatusRangeFigures;
+};
+
+export type RosterStatusCountsPayload =
+  | RosterStatusDateCountsPayload
+  | RosterStatusRangeCountsPayload;
+
+/** Narrowing helper — mirror of `isRangeCounts` for the roster figures. The
+ *  `meta.mode` echo is what we read, not any field on the counts object. */
+export function isRosterRangeCounts(
+  payload: RosterStatusCountsPayload,
+): payload is RosterStatusRangeCountsPayload {
+  return payload.meta.mode === "range";
+}
+

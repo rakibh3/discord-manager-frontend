@@ -8,9 +8,13 @@ import type {
   RosterImportResult,
   RosterQuery,
   RosterSettings,
+  RosterStatusCountsPayload,
+  RosterStatusEntry,
+  RosterStatusQuery,
   UpdateRosterEntryInput,
   UpdateRosterSettingsInput,
 } from "@/lib/api/types";
+import { periodQuery, periodSearchParams, type Period } from "@/lib/period";
 
 /** Roster endpoints (`API_INTEGRATION.md` §8.6A). All require ADMIN auth. */
 
@@ -89,4 +93,63 @@ export function patchRosterSettings(
     method: "PATCH",
     body: input,
   });
+}
+
+// ── Roster engagement (the read model — §8.6A "The roster engagement read model") ──
+
+export type RosterStatusListOptions = Omit<
+  RosterStatusQuery,
+  "date" | "from" | "to" | "daysOfWeek"
+>;
+
+/** `GET /api/roster/status/counts` — the seven date-mode figures or the
+ *  range-mode rollup. The denominator is ENROLMENT, not Discord membership,
+ *  so these will not equal the dashboard totals. `meta.mode` declares which
+ *  shape the response took. */
+export function getRosterStatusCounts(
+  period: Period,
+): Promise<RosterStatusCountsPayload> {
+  return api<RosterStatusCountsPayload>("/roster/status/counts", {
+    query: periodQuery(period),
+  });
+}
+
+/** `GET /api/roster/status` — paginated, one row per ENROLLED PERSON (not per
+ *  Discord member). Unpaired entries carry the roster details with a `null`
+ *  Discord identity; they are unreachable on Discord, so outreach happens by
+ *  email outside this system. The roster takes no `guildId`. */
+export function getRosterStatusPage(
+  period: Period,
+  options: RosterStatusListOptions = {},
+): Promise<ApiResponse<RosterStatusEntry[]>> {
+  return apiRequest<RosterStatusEntry[]>("/roster/status", {
+    query: {
+      ...periodQuery(period),
+      pairingState: options.pairingState,
+      status: options.status,
+      search: options.search,
+      sortBy: options.sortBy,
+      sortDir: options.sortDir,
+      page: options.page,
+      limit: options.limit,
+    },
+  });
+}
+
+/** `GET /api/roster/status/export` — direct file download, no paging.
+ *  Filenames carry the period (`roster-status-YYYY-MM-DD.csv` for a date,
+ *  `roster-status-YYYY-MM-DD_to_YYYY-MM-DD.csv` for a range). `format=xlsx`
+ *  is a 501 Not Implemented. */
+export function rosterStatusExportPath(
+  period: Period,
+  options: RosterStatusListOptions & { format: "csv" | "xlsx" },
+): string {
+  const params = new URLSearchParams({
+    ...periodSearchParams(period),
+    format: options.format,
+  });
+  if (options.pairingState) params.set("pairingState", options.pairingState);
+  if (options.status) params.set("status", options.status);
+  if (options.search) params.set("search", options.search);
+  return `/roster/status/export?${params.toString()}`;
 }

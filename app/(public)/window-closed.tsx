@@ -73,7 +73,7 @@ export function WindowClosed({
 
         <p className="text-muted-foreground border-t pt-3 text-sm">
           Attendance এবং <code>#daily-update</code> দুটোই একই সময়ের
-          মধ্যে করতে হবে। কিছু নিয়ে কনফিউজান থাকলে Discord সার্ভারে জানান।
+          মধ্যে করতে হবে। কিছু নিয়ে কনফিউশান থাকলে Discord সার্ভারে জানান।
         </p>
       </CardContent>
     </Card>
