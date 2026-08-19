@@ -1,6 +1,6 @@
 "use client";
 
-import { AtSign, Megaphone, RefreshCcw } from "lucide-react";
+import { AtSign, DoorOpen, Megaphone, RefreshCcw } from "lucide-react";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
@@ -23,16 +23,25 @@ import { Spinner } from "@/components/ui/spinner";
 import type {
   AnnouncementPayload,
   AnnouncementSendResult,
+  AttendanceWindow,
 } from "@/lib/api/types";
-import { formatCivilDate } from "@/lib/dhaka-date";
+import { formatCivilDate, formatWallClock } from "@/lib/dhaka-date";
 
 /** Manual send, behind a confirmation that renders `preview.content` verbatim —
- *  it posts to ~5,000 students with no undo. Forced send is a separate control. */
+ *  it posts to ~5,000 students with no undo. Forced send is a separate control.
+ *
+ *  The send also **opens `#daily-update`** in the servers it posts to, so the
+ *  confirmation names that second effect: it is a permission change on a channel
+ *  thousands of students read, and it is not undone by the post being deleted. */
 export function SendAnnouncement({
   payload,
+  channelWindow,
   onRefreshed,
 }: {
   payload: AnnouncementPayload;
+  /** The `#daily-update` window this send will open, or `null` when it could
+   *  not be read. Used to name the lock time in the confirmation. */
+  channelWindow: AttendanceWindow | null;
   onRefreshed: (next: AnnouncementPayload) => void;
 }) {
   const [pending, startTransition] = useTransition();
@@ -106,6 +115,22 @@ export function SendAnnouncement({
                   shown afterwards.
                 </span>
 
+                <span className="flex items-start gap-2">
+                  <DoorOpen aria-hidden className="mt-0.5 size-4 shrink-0" />
+                  <span>
+                    It also <strong>opens #daily-update</strong> wherever it
+                    posts, so students can submit straight away
+                    {channelWindow?.closeTime
+                      ? ` until ${formatWallClock(channelWindow.closeTime)}`
+                      : null}
+                    . Tomorrow still opens at the scheduled time — this does not
+                    move it.
+                    {channelWindow?.enabled === false
+                      ? " The channel schedule is turned off, so nothing will lock it again: it has to be locked by hand."
+                      : null}
+                  </span>
+                </span>
+
                 {template.mentionEveryone ? (
                   <span className="text-warning flex items-start gap-2 font-medium">
                     <AtSign aria-hidden className="mt-0.5 size-4 shrink-0" />
@@ -172,6 +197,11 @@ export function SendAnnouncement({
                   second announcement is genuinely intended. A send that{" "}
                   <strong>failed</strong> did not consume the day — retry with
                   the ordinary button instead, or this will post twice.
+                </span>
+                <span>
+                  A channel that is already open is left alone, so this will not
+                  post a second &ldquo;Channel is OPEN&rdquo; embed on top of
+                  the second message.
                 </span>
 
                 {template.mentionEveryone ? (

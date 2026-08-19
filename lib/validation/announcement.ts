@@ -3,6 +3,7 @@ import type {
   AnnouncementPayload,
   AnnouncementPlaceholder,
 } from "@/lib/api/types";
+import { formatWallClock } from "@/lib/dhaka-date";
 
 /** Client-side mirrors of the announcement's backend rules, so an admin is told
  *  before a request goes out. The 2,000-char limit is server-only by necessity. */
@@ -134,10 +135,17 @@ export type AnnouncementValidation =
   | { ok: true; patch: AnnouncementPatch }
   | { ok: false; message: string };
 
-/** Mirrors every rejection the backend makes that we can check without it. */
+/** Mirrors every rejection the backend makes that we can check without it.
+ *
+ *  `channelCloseTime` is the `#daily-update` schedule's lock time. Changing
+ *  `announceTime` moves the channel's *open* time with it — the two are one
+ *  setting on the backend — so an announce time at or after the lock time is a
+ *  400 there. Pass `null` when the channel schedule could not be read; the check
+ *  is then left to the backend rather than guessed at. */
 export function validateAnnouncement(
   payload: AnnouncementPayload,
   next: AnnouncementFormValues,
+  channelCloseTime: string | null = null,
 ): AnnouncementValidation {
   if (next.body.trim().length === 0) {
     return {
@@ -170,6 +178,18 @@ export function validateAnnouncement(
       ok: false,
       message:
         "Enter the announce time in 24-hour HH:mm format, between 00:00 and 23:59.",
+    };
+  }
+
+  // String comparison is correct for zero-padded HH:mm.
+  if (
+    channelCloseTime !== null &&
+    next.announceTime !== payload.schedule.announceTime &&
+    next.announceTime >= channelCloseTime
+  ) {
+    return {
+      ok: false,
+      message: `Posting at ${formatWallClock(next.announceTime)} would open #daily-update at or after it locks at ${formatWallClock(channelCloseTime)}, leaving students no window to submit in. Move the lock time later on the schedule screen first.`,
     };
   }
 

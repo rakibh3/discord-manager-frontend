@@ -8,6 +8,7 @@ import {
   patchAnnouncement,
   sendAnnouncement,
 } from "@/lib/api/endpoints/announcement";
+import { formatWallClock } from "@/lib/dhaka-date";
 import type {
   AnnouncementPatch,
   AnnouncementPayload,
@@ -32,6 +33,12 @@ export async function updateAnnouncement(
   try {
     const data = await patchAnnouncement(patch);
     revalidatePath("/dashboard/announcement");
+
+    // `announceTime` *is* the channel's open time — the backend moves both in
+    // one transaction — so the schedule screen is stale the moment this
+    // succeeds, and would otherwise keep showing the old opening time.
+    if (patch.announceTime) revalidatePath("/dashboard/schedule");
+
     return { ok: true, data };
   } catch (error) {
     if (!(error instanceof ApiError)) throw error;
@@ -66,6 +73,9 @@ export async function sendAnnouncementNow(
   try {
     const result = await sendAnnouncement(force, guildIds);
     revalidatePath("/dashboard/announcement");
+    // The send opened `#daily-update` wherever it posted, so the channel state
+    // on the schedule screen — read live from Discord — has just changed.
+    revalidatePath("/dashboard/schedule");
 
     // ⚠️ Not the `ok`/`succeeded` envelope the channel toggles use: each server
     // reports a dispatch *status*, because "already sent" is neither success nor
@@ -87,23 +97,55 @@ export async function sendAnnouncementNow(
 
     const { total, alreadySent } = result.summary;
 
-    const message =
+    // Sending and opening the channel are one action: the message tells students
+    // to submit, and the window is what lets them. A server where the post landed
+    // but the channel stayed shut is the worst outcome of the two — those
+    // students can read the instruction and cannot act on it — so it is carried
+    // in the headline rather than left to the report below.
+    const channelFailed = result.channel.failed;
+
+    const base =
       failed.length > 0
         ? `Posted in ${posted.length} of ${total} servers — ${failed.length} failed.`
         : total > 1
           ? `Posted in ${posted.length} of ${total} servers${alreadySent > 0 ? `; ${alreadySent} already had today's message.` : "."}`
           : "Announcement posted.";
 
+    const parts = [base];
+
+    if (channelFailed.length > 0) {
+      parts.push(
+        `#daily-update did not open in ${channelFailed.length} server${channelFailed.length === 1 ? "" : "s"} — those students cannot submit yet.`,
+      );
+    } else if (result.channel.opened.length > 0) {
+      parts.push(
+        `#daily-update is now open${result.channel.locksAt ? ` until ${formatWallClock(result.channel.locksAt)}` : ""}.`,
+      );
+    }
+
+    if (result.channel.locksAt === null && result.channel.opened.length > 0) {
+      // No lock job is registered, so nothing will close the window. A post made
+      // after midnight lands on the *next* day's record.
+      parts.push("Nothing will lock it — it has to be locked by hand.");
+    }
+
+    if (unresolved.size > 0) {
+      parts.push(
+        `${unresolved.size} mention target(s) no longer resolve and were dropped from the post.`,
+      );
+    }
+
     return {
       ok: true,
       result,
       // A run that left a server behind is not a success story, whatever the
-      // status code says.
-      partial: failed.length > 0 || (posted.length > 0 && posted.length < total),
-      message:
-        unresolved.size > 0
-          ? `${message} ${unresolved.size} mention target(s) no longer resolve and were dropped from the post.`
-          : message,
+      // status code says — and a channel that did not open leaves one behind
+      // just as surely as a post that did not land.
+      partial:
+        failed.length > 0 ||
+        channelFailed.length > 0 ||
+        (posted.length > 0 && posted.length < total),
+      message: parts.join(" "),
       refreshed: await refreshQuietly(),
     };
   } catch (error) {

@@ -1,6 +1,7 @@
 "use client";
 
-import { Save } from "lucide-react";
+import { Lock, Save } from "lucide-react";
+import Link from "next/link";
 import { useId, useState, useTransition } from "react";
 import { toast } from "sonner";
 
@@ -19,11 +20,17 @@ import {
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
+import { formatWallClock } from "@/lib/dhaka-date";
 import type { ChannelSchedulePayload } from "@/lib/api/types";
 import { validateSchedulePatch, WEEKDAYS } from "@/lib/validation/schedule";
 
-/** Two time inputs and seven weekday checkboxes. No cron field (derived at
- *  registration, never stored) and no `timezone` — the zone is fixed at Asia/Dhaka. */
+/** One time input and seven weekday checkboxes. No cron field (derived at
+ *  registration, never stored) and no `timezone` — the zone is fixed at Asia/Dhaka.
+ *
+ *  The open time is **shown but not editable**: it mirrors the announcement time,
+ *  because the channel opens when the announcement is posted. It is rendered
+ *  `readOnly` rather than `disabled` so it stays focusable and is still read out
+ *  — an admin needs to be able to reach the explanation of why it is locked. */
 export function ScheduleEditor({
   payload,
   onUpdated,
@@ -33,7 +40,6 @@ export function ScheduleEditor({
 }) {
   const stored = payload.schedule;
 
-  const [openTime, setOpenTime] = useState(stored.openTime);
   const [closeTime, setCloseTime] = useState(stored.closeTime);
   const [days, setDays] = useState<number[]>(stored.daysOfWeek);
   const [enabled, setEnabled] = useState(stored.enabled);
@@ -48,7 +54,6 @@ export function ScheduleEditor({
   const [seenStored, setSeenStored] = useState(stored);
   if (seenStored !== stored) {
     setSeenStored(stored);
-    setOpenTime(stored.openTime);
     setCloseTime(stored.closeTime);
     setDays(stored.daysOfWeek);
     setEnabled(stored.enabled);
@@ -68,9 +73,9 @@ export function ScheduleEditor({
     event.preventDefault();
 
     // Mirrors the backend's three rejections — empty patch, no weekday, and
-    // `closeTime > openTime` judged against the merged row.
+    // `closeTime > openTime` judged against the stored (announcement-owned)
+    // open time.
     const validation = validateSchedulePatch(stored, {
-      openTime,
       closeTime,
       daysOfWeek: days,
       enabled,
@@ -103,19 +108,38 @@ export function ScheduleEditor({
         ) : null}
 
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field>
-            <FieldLabel htmlFor={openId}>Opens at</FieldLabel>
-            <Input
+          {/* Not an input. `readOnly` is unreliable on `type="time"` — several
+              browsers still let the picker change it — and a value that can be
+              edited but is never sent would report a save that did not happen.
+              A `disabled` input would be honest but drops out of the tab order,
+              putting the explanation below out of reach. So it is text. */}
+          <Field role="group" aria-labelledby={openId}>
+            <span
               id={openId}
-              type="time"
-              value={openTime}
-              required
-              onChange={(event) => {
-                setOpenTime(event.target.value);
-                setError(null);
-              }}
-            />
-            <FieldDescription>Asia/Dhaka, 24-hour.</FieldDescription>
+              className="flex items-center gap-1.5 text-sm leading-none font-medium"
+            >
+              Opens at
+              {/* The state is carried as icon and words, not by the muted fill
+                  alone — which on its own reads as "not filled in yet". */}
+              <span className="text-muted-foreground inline-flex items-center gap-1 text-xs font-normal">
+                <Lock aria-hidden className="size-3" />
+                Set by the announcement
+              </span>
+            </span>
+            <p className="border-input bg-muted/50 text-muted-foreground flex h-8 items-center rounded-lg border px-2.5 py-1 text-base tabular-nums md:text-sm">
+              {formatWallClock(stored.openTime)}
+            </p>
+            <FieldDescription>
+              The channel opens the moment the announcement is posted, so this
+              mirrors the announce time and cannot be changed here.{" "}
+              <Link
+                href="/dashboard/announcement"
+                className="underline underline-offset-4"
+              >
+                Change it on the announcement screen
+              </Link>
+              .
+            </FieldDescription>
           </Field>
 
           <Field>
@@ -130,7 +154,11 @@ export function ScheduleEditor({
                 setError(null);
               }}
             />
-            <FieldDescription>Must be later than the open time.</FieldDescription>
+            <FieldDescription>
+              Asia/Dhaka, 24-hour. Must be later than{" "}
+              {formatWallClock(stored.openTime)} - to lock earlier than that, move
+              the announcement first.
+            </FieldDescription>
           </Field>
         </div>
 

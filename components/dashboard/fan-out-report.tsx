@@ -1,9 +1,11 @@
 "use client";
 
-import { CheckCircle2, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, DoorOpen, XCircle } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { formatWallClock } from "@/lib/dhaka-date";
 import type {
+  AnnouncementChannelOutcome,
   AnnouncementSendResult,
   FanOutServer,
   FanOutSummary,
@@ -91,20 +93,44 @@ export function AnnouncementReport({
   result: AnnouncementSendResult;
 }) {
   const { total, posted, failed, alreadySent } = result.summary;
-  if (total <= 1 && failed === 0) return null;
+  const channel = result.channel;
+  // A send that posted everywhere but could not open the channel anywhere is
+  // still a broken evening, so the report has to render for it even when the
+  // per-server list would have nothing to say.
+  const channelFailed = channel.failed.length > 0;
+  const unlocked = channel.locksAt === null && channel.opened.length > 0;
+
+  if (total <= 1 && failed === 0 && !channelFailed && !unlocked) return null;
 
   const variant =
-    failed > 0 ? (posted === 0 ? "destructive" : "warning") : "success";
+    failed > 0 || channelFailed
+      ? posted === 0
+        ? "destructive"
+        : "warning"
+      : unlocked
+        ? "warning"
+        : "success";
 
   return (
     <Alert variant={variant}>
-      {failed > 0 ? <XCircle /> : <CheckCircle2 />}
+      {/* A check mark over a warning-coloured alert reads as "fine" at a
+          glance, which an unlockable window is not. */}
+      {failed > 0 || channelFailed ? (
+        <XCircle />
+      ) : unlocked ? (
+        <AlertTriangle />
+      ) : (
+        <CheckCircle2 />
+      )}
       <AlertTitle>
         Posted in {posted} of {total} servers
         {alreadySent > 0 ? ` · ${alreadySent} already had today's message` : ""}
         {failed > 0 ? ` · ${failed} failed` : ""}
+        {channelFailed
+          ? ` · #daily-update did not open in ${channel.failed.length}`
+          : ""}
       </AlertTitle>
-      <AlertDescription>
+      <AlertDescription className="flex flex-col gap-2">
         <ul className="flex flex-col gap-1.5">
           {result.servers.map((server) => (
             <li key={server.guildId} className="flex flex-col gap-0.5">
@@ -128,7 +154,65 @@ export function AnnouncementReport({
             </li>
           ))}
         </ul>
+
+        <ChannelOutcome channel={channel} />
       </AlertDescription>
     </Alert>
+  );
+}
+
+/** The channel half of a send. The announcement and the window it opens are one
+ *  action on the backend, so they are reported together: a post that landed in a
+ *  channel that stayed shut told students to do something they cannot do. */
+function ChannelOutcome({
+  channel,
+}: {
+  channel: AnnouncementChannelOutcome;
+}) {
+  const opened = channel.opened.length;
+  const alreadyOpen = channel.alreadyOpen.length;
+
+  return (
+    <div className="border-current/20 mt-1 flex flex-col gap-1.5 border-t pt-2 text-sm">
+      <span className="flex items-center gap-1.5 font-medium">
+        <DoorOpen aria-hidden className="size-3.5" />
+        #daily-update
+      </span>
+
+      <span>
+        {opened > 0
+          ? `Opened in ${opened} server${opened === 1 ? "" : "s"}.`
+          : "No channel was opened by this send."}
+        {alreadyOpen > 0
+          ? ` ${alreadyOpen} ${alreadyOpen === 1 ? "was" : "were"} already open and left untouched.`
+          : ""}
+        {channel.locksAt
+          ? ` It locks at ${formatWallClock(channel.locksAt)}.`
+          : opened > 0 || alreadyOpen > 0
+            ? " No lock is scheduled, so it will stay open past midnight — where a post lands on tomorrow's record. Lock it by hand from the schedule screen."
+            : ""}
+      </span>
+
+      {channel.failed.length > 0 ? (
+        <div className="flex flex-col gap-1.5">
+          <span>
+            The announcement went out here but the channel did{" "}
+            <strong>not</strong> open — students can read it and cannot submit.
+            This is usually a missing <code className="font-mono">Manage
+            Roles</code> on the channel itself.
+          </span>
+          <ul className="flex flex-col gap-1">
+            {channel.failed.map((server) => (
+              <li key={server.guildId} className="flex flex-col gap-0.5">
+                <span className="font-medium">{server.label}</span>
+                <code className="bg-muted overflow-x-auto rounded p-1.5 font-mono text-xs">
+                  {server.error ?? "No reason given."}
+                </code>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
   );
 }

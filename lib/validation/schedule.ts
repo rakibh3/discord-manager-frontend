@@ -1,4 +1,5 @@
 import type { ChannelSchedulePayload, SchedulePatch } from "@/lib/api/types";
+import { formatWallClock } from "@/lib/dhaka-date";
 
 /** 0 = Sunday … 6 = Saturday, matching the backend's `daysOfWeek`. */
 export const WEEKDAYS = [
@@ -23,19 +24,21 @@ export function formatWeekdays(days: number[]): string {
     .join(", ");
 }
 
+/** The editable half of the schedule. `openTime` is deliberately absent — it
+ *  mirrors the announcement time and the backend rejects it outright. */
+export type ScheduleFormValues = {
+  closeTime: string;
+  daysOfWeek: number[];
+  enabled: boolean;
+};
+
 /** Only the fields that actually differ from the loaded row. */
 export function buildPatch(
   current: ChannelSchedulePayload["schedule"],
-  next: {
-    openTime: string;
-    closeTime: string;
-    daysOfWeek: number[];
-    enabled: boolean;
-  },
+  next: ScheduleFormValues,
 ): SchedulePatch {
   const patch: SchedulePatch = {};
 
-  if (next.openTime !== current.openTime) patch.openTime = next.openTime;
   if (next.closeTime !== current.closeTime) patch.closeTime = next.closeTime;
   if (next.enabled !== current.enabled) patch.enabled = next.enabled;
 
@@ -46,7 +49,8 @@ export function buildPatch(
   }
 
   // `timezone` is deliberately never included — the backend strips it silently
-  // and the zone is fixed at Asia/Dhaka.
+  // and the zone is fixed at Asia/Dhaka. `openTime` is not included either, but
+  // for the opposite reason: it is *rejected*, not stripped.
   return patch;
 }
 
@@ -54,21 +58,17 @@ export type ScheduleValidation =
   | { ok: true; patch: SchedulePatch }
   | { ok: false; message: string };
 
-/** Mirrors the backend's three rejections. `closeTime > openTime` is applied to
- *  the patch merged with the stored row, so the check here has to merge too. */
+/** Mirrors the backend's three rejections. `closeTime` is judged against the
+ *  **stored** `openTime`, which is the announcement time — the form cannot move
+ *  it, so there is nothing to merge on that side any more. */
 export function validateSchedulePatch(
   current: ChannelSchedulePayload["schedule"],
-  next: {
-    openTime: string;
-    closeTime: string;
-    daysOfWeek: number[];
-    enabled: boolean;
-  },
+  next: ScheduleFormValues,
 ): ScheduleValidation {
-  if (!TIME_PATTERN.test(next.openTime) || !TIME_PATTERN.test(next.closeTime)) {
+  if (!TIME_PATTERN.test(next.closeTime)) {
     return {
       ok: false,
-      message: "Enter both times in 24-hour HH:mm format, between 00:00 and 23:59.",
+      message: "Enter the lock time in 24-hour HH:mm format, between 00:00 and 23:59.",
     };
   }
 
@@ -89,14 +89,14 @@ export function validateSchedulePatch(
     };
   }
 
-  const mergedOpen = patch.openTime ?? current.openTime;
-  const mergedClose = patch.closeTime ?? current.closeTime;
+  const openTime = current.openTime;
+  const closeTime = patch.closeTime ?? current.closeTime;
 
   // String comparison is correct for zero-padded HH:mm.
-  if (mergedClose <= mergedOpen) {
+  if (closeTime <= openTime) {
     return {
       ok: false,
-      message: `The close time must be later than the open time. This change would leave the channel opening at ${mergedOpen} and locking at ${mergedClose} on the same day.`,
+      message: `The lock time must be later than ${formatWallClock(openTime)}, when the channel opens. Because the open time follows the announcement, locking earlier than that means moving the announcement first — on the announcement screen.`,
     };
   }
 

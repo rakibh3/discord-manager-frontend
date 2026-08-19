@@ -3,6 +3,7 @@ import { Suspense } from "react";
 
 import { AnnouncementView } from "./announcement-view";
 import { Skeleton } from "@/components/ui/skeleton";
+import { getAttendanceWindow } from "@/lib/attendance-window";
 import { getAnnouncement } from "@/lib/api/endpoints/announcement";
 
 export const metadata: Metadata = { title: "Announcement" };
@@ -10,8 +11,19 @@ export const metadata: Metadata = { title: "Announcement" };
 async function Announcement() {
   // Uncached by design: `preview.content` has today's date expanded into it, and
   // `today.posted` gates the send button. Either served stale would mislead.
-  const payload = await getAnnouncement();
-  return <AnnouncementView initial={payload} />;
+  //
+  // The window is read alongside it because the announce time now *is* the
+  // channel's open time: changing it moves the window, and an announce time at
+  // or after the lock time is a 400. Read from `/attendance/window` rather than
+  // `/schedule/daily-update` deliberately — it is derived from the same stored
+  // row without the live Discord call that endpoint costs, and it fails open to
+  // `null`, which only means the cross-field check is left to the backend.
+  const [payload, channelWindow] = await Promise.all([
+    getAnnouncement(),
+    getAttendanceWindow(),
+  ]);
+
+  return <AnnouncementView initial={payload} channelWindow={channelWindow} />;
 }
 
 function AnnouncementSkeleton() {

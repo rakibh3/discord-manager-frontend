@@ -201,8 +201,15 @@ export type ScheduleServerState = ServerRef & {
  *  combined reading is derived from `servers[]`, never reported as a fact. */
 export type ChannelSchedulePayload = {
   schedule: {
-    /** `HH:mm` wall clock, Asia/Dhaka. */
+    /** `HH:mm` wall clock, Asia/Dhaka. **Read-only.** It mirrors the attendance
+     *  announcement's `announceTime` — the channel opens at the moment the
+     *  announcement is posted — and moves only when that time is changed at
+     *  `PATCH /announcement/attendance`. Sending it here is a 400, not a silent
+     *  no-op, so a form can never report a save that did not move the window. */
     openTime: string;
+    /** Always `"ANNOUNCEMENT"`. Present so the open-time field can be rendered
+     *  non-editable from the payload itself rather than from a hard-coded rule. */
+    openTimeSource: "ANNOUNCEMENT";
     closeTime: string;
     /** 0 = Sunday … 6 = Saturday. */
     daysOfWeek: number[];
@@ -237,9 +244,11 @@ export type ChannelToggleResult = {
   })[];
 };
 
-/** A patch body. Every field optional, but an empty object is rejected (400). */
+/** A patch body. Every field optional, but an empty object is rejected (400).
+ *
+ *  ⚠️ No `openTime`: it follows the announcement time and the backend **rejects**
+ *  the field outright. Move it at `PATCH /announcement/attendance` instead. */
 export type SchedulePatch = {
-  openTime?: string;
   closeTime?: string;
   daysOfWeek?: number[];
   enabled?: boolean;
@@ -394,6 +403,30 @@ export type AnnouncementSendResult = {
     alreadySent: number;
   };
   servers: (ServerRef & AnnouncementDispatchResult)[];
+  /** The submission window this send **opened**. Sending the announcement and
+   *  opening `#daily-update` are one action on the backend: a message telling
+   *  students to submit into a channel they cannot post in would be worse than
+   *  no message at all. Read this after every send — a server can appear under
+   *  `failed` here while its post succeeded. */
+  channel: AnnouncementChannelOutcome;
+};
+
+/** The channel half of a send. Guild IDs, not labels — pair them against
+ *  `servers[]` (or `GET /discord/servers`) to name them on screen. */
+export type AnnouncementChannelOutcome = {
+  /** Guild IDs whose `#daily-update` this send opened. */
+  opened: string[];
+  /** Already open, so not re-edited — a forced second send does not post a
+   *  second "Channel is OPEN" embed. */
+  alreadyOpen: string[];
+  /** ⚠️ The announcement went out and the channel did **not** open. Those
+   *  students can read the message and cannot act on it — usually a missing
+   *  `Manage Roles`. */
+  failed: { guildId: string; label: string; error: string | null }[];
+  /** `HH:mm` the lock job will close it, or `null` when the channel schedule is
+   *  disabled — meaning nothing will lock it and it stays open past midnight,
+   *  where a post lands on the *next* day's record. */
+  locksAt: string | null;
 };
 
 /** A patch body. Every field optional, but an empty object is rejected (400). */

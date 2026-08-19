@@ -26,12 +26,13 @@ import {
   announcementAttempts,
   latestAnnouncementOutcome,
 } from "@/lib/api/derive";
-import type { AnnouncementPayload } from "@/lib/api/types";
+import type { AnnouncementPayload, AttendanceWindow } from "@/lib/api/types";
 import {
   dhakaTimeNow,
   dhakaWeekday,
   formatCivilDate,
   formatDhaka,
+  formatWallClock,
 } from "@/lib/dhaka-date";
 import {
   describeUnresolved,
@@ -43,8 +44,13 @@ import { formatWeekdays } from "@/lib/validation/schedule";
  *  payloads that replace it directly, and `initial` wins on every server render. */
 export function AnnouncementView({
   initial,
+  channelWindow,
 }: {
   initial: AnnouncementPayload;
+  /** The `#daily-update` window, or `null` when it could not be read. Its
+   *  `closeTime` bounds the announce time — the announcement opens the channel,
+   *  so a time at or after the lock leaves no window to submit in. */
+  channelWindow: AttendanceWindow | null;
 }) {
   const [payload, setPayload] = useState(initial);
 
@@ -143,7 +149,8 @@ export function AnnouncementView({
           <Clock />
           <AlertTitle>Today&rsquo;s announcement has not been posted</AlertTitle>
           <AlertDescription>
-            The scheduled time ({schedule.announceTime}) has passed and nothing
+            The scheduled time ({formatWallClock(schedule.announceTime)}) has
+            passed and nothing
             went out. There is deliberately no catch-up — a missed announcement
             is never posted late — so today needs a manual send.
           </AlertDescription>
@@ -266,7 +273,11 @@ export function AnnouncementView({
               </div>
             ) : null}
 
-            <SendAnnouncement payload={payload} onRefreshed={setPayload} />
+            <SendAnnouncement
+              payload={payload}
+              channelWindow={channelWindow}
+              onRefreshed={setPayload}
+            />
           </CardContent>
         </Card>
 
@@ -376,17 +387,27 @@ export function AnnouncementView({
           </CardTitle>
           <CardDescription>
             Currently {schedule.enabled ? "enabled" : "disabled"}, posting at{" "}
-            {schedule.announceTime} on {formatWeekdays(schedule.daysOfWeek)} (
+            {formatWallClock(schedule.announceTime)} on{" "}
+            {formatWeekdays(schedule.daysOfWeek)} (
             {schedule.timezone}). Last changed{" "}
             {formatDhaka(template.updatedAt)}
             {template.updatedBy
               ? ` by ${template.updatedBy.name}`
               : " (the admin who changed it has since been deleted)"}
+            . The post time is also when{" "}
+            <code className="font-mono text-xs">#daily-update</code> opens
+            {channelWindow
+              ? `, and it locks at ${formatWallClock(channelWindow.closeTime)}`
+              : null}
             .
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <AnnouncementEditor payload={payload} onUpdated={setPayload} />
+          <AnnouncementEditor
+            payload={payload}
+            channelWindow={channelWindow}
+            onUpdated={setPayload}
+          />
         </CardContent>
       </Card>
     </div>

@@ -264,6 +264,54 @@ describe("validateAnnouncement", () => {
     if (!result.ok) expect(result.message).toContain("Nothing has changed");
   });
 
+  /** The post time is also the channel's open time, so an announcement at or
+   *  after the lock would open a window that is already over. The backend
+   *  answers 400; checking here names the fix instead. */
+  test("rejects an announce time at or after the channel's lock time", () => {
+    const result = validateAnnouncement(
+      payload,
+      withChanges({ announceTime: "23:59" }),
+      "23:59",
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.message).toContain("no window to submit in");
+  });
+
+  test("allows an announce time earlier than the lock time", () => {
+    const result = validateAnnouncement(
+      payload,
+      withChanges({ announceTime: "20:00" }),
+      "23:59",
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
+  /** The window read fails open to `null`. Blocking the save then would ground
+   *  the editor on an unrelated outage; the backend still enforces the rule. */
+  test("skips the lock-time check when the channel window could not be read", () => {
+    const result = validateAnnouncement(
+      payload,
+      withChanges({ announceTime: "23:59" }),
+      null,
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
+  /** An already-stored time that now conflicts must not block an unrelated edit
+   *  — the admin would be stuck unable to save anything at all. */
+  test("does not block other edits when the stored announce time already conflicts", () => {
+    const result = validateAnnouncement(
+      payload,
+      withChanges({ body: "New text" }),
+      "18:00",
+    );
+
+    expect(result.ok).toBe(true);
+  });
+
   /** The limit applies to the rendered message plus the mention line, which the
    *  browser cannot compute — a `body.length` check would disagree both ways. */
   test("does not enforce the 2,000-character limit on the raw body", () => {

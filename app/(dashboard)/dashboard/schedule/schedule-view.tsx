@@ -1,6 +1,7 @@
 "use client";
 
 import { AlertTriangle, CircleSlash, Info } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 
 import { ManualOverride } from "./manual-override";
@@ -225,7 +226,14 @@ export function ScheduleView({ initial }: { initial: ChannelSchedulePayload }) {
             {schedule.updatedBy
               ? ` by ${schedule.updatedBy.name}`
               : " (the admin who changed it has since been deleted)"}
-            .
+            . The open time is owned by the{" "}
+            <Link
+              href="/dashboard/announcement"
+              className="underline underline-offset-4"
+            >
+              attendance announcement
+            </Link>{" "}
+            - the channel opens the moment that message goes out.
           </CardDescription>
         </CardHeader>
         <CardContent>

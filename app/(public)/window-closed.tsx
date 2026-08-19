@@ -48,7 +48,7 @@ export function WindowClosed({
             <div className="bg-muted/60 flex flex-col gap-1 rounded-md p-3">
               <p className="flex items-center gap-2 font-medium">
                 <CalendarClock aria-hidden className="size-5" />
-                Open daily from {formatWallClock(attendanceWindow.openTime)} to{" "}
+                Open from {formatWallClock(attendanceWindow.openTime)} to{" "}
                 {formatWallClock(attendanceWindow.closeTime)}
               </p>
               <p className="text-muted-foreground text-sm">
@@ -64,7 +64,7 @@ export function WindowClosed({
             ) : null}
 
             <p className="text-muted-foreground">
-              প্রতিদিন <strong>{formatWallClock(attendanceWindow.openTime)}</strong> থেকে{" "}
+              <strong>{formatWallClock(attendanceWindow.openTime)}</strong> থেকে{" "}
               <strong>{formatWallClock(attendanceWindow.closeTime)}</strong> পর্যন্ত attendance জমা দেওয়া
               যাবে। এই সময়ের বাইরে ফর্মটি বন্ধ থাকে।
             </p>
@@ -72,7 +72,7 @@ export function WindowClosed({
         )}
 
         <p className="text-muted-foreground border-t pt-3 text-sm">
-          Attendance এবং <code>#daily-update</code> আলাদা — দুটোই একই সময়ের
+          Attendance এবং <code>#daily-update</code> দুটোই একই সময়ের
           মধ্যে করতে হবে। কিছু নিয়ে কনফিউজান থাকলে Discord সার্ভারে জানান।
         </p>
       </CardContent>

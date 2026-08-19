@@ -1,10 +1,12 @@
 "use client";
 
 import { AtSign, Eye, Save } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useId, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 
 import { updateAnnouncement } from "@/actions/announcement";
+import { formatWallClock } from "@/lib/dhaka-date";
 import { DiscordMessage } from "@/components/dashboard/discord-message";
 import {
   AlertDialog,
@@ -32,7 +34,11 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import type { AnnouncementPayload, AnnouncementPreview } from "@/lib/api/types";
+import type {
+  AnnouncementPayload,
+  AnnouncementPreview,
+  AttendanceWindow,
+} from "@/lib/api/types";
 import {
   describeUnresolved,
   formValuesFrom,
@@ -42,12 +48,19 @@ import {
 import { WEEKDAYS } from "@/lib/validation/schedule";
 
 /** The announcement editor. No close-time or cron field — both are derived
- *  elsewhere. The counter is driven by the rendered preview, not `body.length`. */
+ *  elsewhere. The counter is driven by the rendered preview, not `body.length`.
+ *
+ *  The post time is doubly consequential: it is also when `#daily-update` opens,
+ *  in the same transaction, so the field says so rather than letting an admin
+ *  discover it from a moved window the next evening. */
 export function AnnouncementEditor({
   payload,
+  channelWindow,
   onUpdated,
 }: {
   payload: AnnouncementPayload;
+  /** The `#daily-update` window, or `null` when it could not be read. */
+  channelWindow: AttendanceWindow | null;
   onUpdated: (next: AnnouncementPayload) => void;
 }) {
   const [values, setValues] = useState<AnnouncementFormValues>(() =>
@@ -60,6 +73,7 @@ export function AnnouncementEditor({
   const bodyId = useId();
   const daysId = useId();
   const timeId = useId();
+  const timeHintId = useId();
   const rolesId = useId();
   const usersId = useId();
   const bodyRef = useRef<HTMLTextAreaElement>(null);
@@ -103,7 +117,11 @@ export function AnnouncementEditor({
   };
 
   const save = () => {
-    const validation = validateAnnouncement(payload, values);
+    const validation = validateAnnouncement(
+      payload,
+      values,
+      channelWindow?.closeTime ?? null,
+    );
     if (!validation.ok) {
       setError(validation.message);
       return;
@@ -114,8 +132,12 @@ export function AnnouncementEditor({
       const result = await updateAnnouncement(validation.patch);
       if (result.ok) {
         onUpdated(result.data);
+        // A moved post time silently moved the submission window too. Saying so
+        // here is the only place an admin finds out before tomorrow evening.
         toast.success(
-          "Announcement saved. The scheduled task was rebuilt in-process.",
+          validation.patch.announceTime
+            ? `Announcement saved. #daily-update now opens at ${formatWallClock(validation.patch.announceTime)} as well, and the channel was reconciled immediately.`
+            : "Announcement saved. The scheduled task was rebuilt in-process.",
         );
       } else {
         setError(result.message);
@@ -302,12 +324,29 @@ export function AnnouncementEditor({
                   type="time"
                   value={values.announceTime}
                   required
+                  aria-describedby={timeHintId}
                   className="max-w-40"
                   onChange={(event) =>
                     patch({ announceTime: event.target.value })
                   }
                 />
-                <FieldDescription>Asia/Dhaka, 24-hour.</FieldDescription>
+                <FieldDescription id={timeHintId}>
+                  Asia/Dhaka, 24-hour. This is also when{" "}
+                  <code className="font-mono text-xs">#daily-update</code>{" "}
+                  opens — the channel opens as the message goes out, so changing
+                  this moves the submission window with it
+                  {channelWindow
+                    ? `, and it must stay earlier than the ${formatWallClock(channelWindow.closeTime)} lock time`
+                    : null}
+                  .{" "}
+                  <Link
+                    href="/dashboard/schedule"
+                    className="underline underline-offset-4"
+                  >
+                    See the channel schedule
+                  </Link>
+                  .
+                </FieldDescription>
               </Field>
 
               <FieldSet>

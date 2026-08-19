@@ -15,7 +15,11 @@ export function getSchedule(): Promise<ChannelSchedulePayload> {
 }
 
 /** `PATCH /api/schedule/daily-update`. An empty object is a 400 and `timezone`
- *  is never sent; `closeTime > openTime` is checked against the merged row. */
+ *  is never sent.
+ *
+ *  ⚠️ `openTime` is **refused** here, not stripped — it mirrors the announcement
+ *  time and moves only at `PATCH /announcement/attendance`. `closeTime` is
+ *  checked against that stored open time. */
 export function patchSchedule(
   patch: SchedulePatch,
 ): Promise<ChannelSchedulePayload> {
