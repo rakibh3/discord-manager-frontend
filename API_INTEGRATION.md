@@ -464,7 +464,9 @@ Top-level `alreadySubmitted` is `true` only when **every** server already has to
 
 `POST /api/attendance/submit` records attendance in **every** server the handle belongs to, in one transaction, and returns the same `servers` array with a `recorded` flag per server. The student submits once; the form does not ask them to pick a server. A `409` still means "already submitted", and now means it for every server they are in.
 
-`GET /api/attendance/window` is **unchanged** — one shared schedule means one window, so it takes no server parameter.
+`GET /api/attendance/window` is **unchanged** — one shared schedule means one window, so it takes no server parameter. It also carries `emailVerificationRequired`, telling the form whether the email field is checked against the active enrolment roster on submit (a bare boolean — no count, no editor identity, no address).
+
+`GET /api/attendance/verify-email` is the email-side mirror of `/verify-user`: same "always 200" rule, same `data.verified` shape, but it answers whether the address is on the roster rather than whether the handle is in a server. The form uses it as the live badge for the email field, the same way it uses `/verify-user` for the handle field — branch on `data.verified`, never on the HTTP status. See §8.6.
 
 ### Status reads are per server
 
@@ -963,6 +965,12 @@ export type VerifyUserPayload = {
   member: VerifiedMember | null;
 };
 
+export type VerifyEmailPayload = {
+  verified: boolean;
+  attendanceDate: string;
+  emailVerificationRequired: boolean;
+};
+
 export type SubmitAttendancePayload = {
   attendanceDate: string;
   submittedAt: string;
@@ -979,6 +987,8 @@ export type AttendanceWindowPayload = {
   timezone: string;
   nextOpenAt: string | null;
   closesAt: string | null;
+  /** True = the email on submit must be one on the enrolled student list. */
+  emailVerificationRequired: boolean;
 };
 
 // ── Daily Status ──────────────────────────────────────────────────────────
@@ -2215,12 +2225,12 @@ Queue and worker health. No parameters.
 
 ### 8.6 Attendance (public) — `/api/attendance`
 
-🔓 **The only three routes in the application with no `auth()` middleware.** Students are not `users` rows, so there is no credential the form could present. What replaces authentication:
+🔓 **The only four routes in the application with no `auth()` middleware.** Students are not `users` rows, so there is no credential the form could present. What replaces authentication:
 
-1. For `/verify-user` and `/submit`: the handle must resolve to a member with `isInGuild: true`.
+1. For `/verify-user`, `/verify-email` and `/submit`: the handle must resolve to a member with `isInGuild: true`; and (when the roster gate is armed) the email must be on the active enrolment list.
 2. Per-IP rate limits (§9).
 
-Both membership checks re-run on the write path — `submit` never trusts that `verify-user` was called. `/window` exposes only the schedule submission window (no member data) and is rate limited.
+Both membership checks re-run on the write path — `submit` never trusts that either verify endpoint was called. `/window` exposes only the schedule submission window (no member data) and is rate limited.
 
 #### 🔓 `GET /api/attendance/window`
 
@@ -2299,6 +2309,57 @@ A leading or trailing `_` or `.` is **valid** (`.rabbil`, `itzazad_`). Don't tig
 **Branch on `data.verified`, never on the HTTP status.**
 
 A malformed handle is a **400** (Zod). The form must tell "fix your typing" (400) apart from "you're not in the server" (200 + `verified: false`).
+
+#### 🔓 `GET /api/attendance/verify-email?email=…`
+
+| Query   | Type   | Rules                                                            |
+| ------- | ------ | ---------------------------------------------------------------- |
+| `email` | string | required, trimmed, must pass the standard email shape (`z.email`) |
+
+**Always 200**, even when the address is not on the roster — "not enrolled" is the routine answer the form has to render as an inline hint, not a failure. `emailVerificationRequired` on the response tells the form whether the gate is currently armed.
+
+```jsonc
+// enrolled (gate armed)
+{
+  "success": true, "statusCode": 200,
+  "message": "Email verified",
+  "data": {
+    "verified": true,
+    "attendanceDate": "2026-08-17",
+    "emailVerificationRequired": true,
+  }
+}
+
+// not on the roster (still HTTP 200)
+{
+  "success": true, "statusCode": 200,
+  "message": "This email address is not on our enrolled student list. Please use the email address you enrolled with, or contact an admin.",
+  "data": {
+    "verified": false,
+    "attendanceDate": "2026-08-17",
+    "emailVerificationRequired": true,
+  }
+}
+
+// gate is OFF — every well-formed address passes
+{
+  "success": true, "statusCode": 200,
+  "message": "Email accepted",
+  "data": {
+    "verified": true,
+    "attendanceDate": "2026-08-17",
+    "emailVerificationRequired": false,
+  }
+}
+```
+
+- The endpoint is the email-side mirror of `/verify-user`: same envelope shape, same "always 200" rule, same live-badge use on the form. Wire them with the same `data.verified` branch.
+- **The address is normalized (trim + lowercase) before lookup**, the same way `POST /submit` normalizes it, so a student pasting from a chat message that picked up trailing whitespace still resolves.
+- **A deactivated/removed entry answers identically to one that was never on the roll** (`verified: false`, no other distinction). Same disclosure concern: telling those two apart would let anyone who can type an address confirm that a particular person used to be enrolled. Never show a "did you mean…" suggestion here; the API sends none.
+- **When the gate is OFF** the endpoint reports `verified: true` for every well-formed address and `emailVerificationRequired: false`. The form should not nag about a check that is not happening — read `emailVerificationRequired` and only render the badge when it is `true`.
+- The gate's current state also lives on `/window` (`data.emailVerificationRequired`). The two should always agree, since both read the same `roster_settings` row.
+
+**Branch on `data.verified`, never on the HTTP status.** A malformed email is a **400** (Zod) — same rule as `/verify-user`: tell "fix your typing" (400) apart from "use the email you enrolled with" (200 + `verified: false`).
 
 #### 🔓 `POST /api/attendance/submit`
 
@@ -3141,6 +3202,7 @@ The leading `servers` cell joins every server the person is in with `" | "` (one
 | --------------------------------- | ------ | ------ | ---------- |
 | `GET /api/attendance/window`      | 60     | 1 min  | per IP     |
 | `GET /api/attendance/verify-user` | 60     | 1 min  | per IP     |
+| `GET /api/attendance/verify-email` | 60    | 1 min  | per IP     |
 | `POST /api/attendance/submit`     | 5      | 15 min | per IP     |
 
 Everything else is unlimited but admin-only.
@@ -3149,7 +3211,7 @@ Everything else is unlimited but admin-only.
 
 Frontend implications:
 
-- Debounce `verify-user` at **500 ms** minimum. 60/min covers a student typing, backspacing, and retrying — but a per-keystroke call will exhaust it.
+- Debounce `verify-user` and `verify-email` at **500 ms** minimum. 60/min covers a student typing, backspacing, and retrying — but a per-keystroke call will exhaust it.
 - Cancel the in-flight verify request on each new keystroke (`AbortController`) so a stale response can't overwrite a newer one.
 - Disable the submit button while a submit is in flight, and don't auto-retry a failed submit — 5 attempts per 15 minutes is the whole budget.
 
@@ -3173,6 +3235,7 @@ Frontend implications:
 | `GET /reminders/targets`        | `no-store`                                           | the preview must match what `send` will do   |
 | `GET /attendance/window`        | `no-store`, client-side, on form mount               | submission window changes with schedule/time |
 | `GET /attendance/verify-user`   | `no-store`, client-side, debounced                   | membership changes minute to minute          |
+| `GET /attendance/verify-email`  | `no-store`, client-side, debounced                   | roster arms/disarms and entries change       |
 | `GET /daily-status/counts`      | `no-store`                                           | live aggregation for date                    |
 | `GET /daily-status`             | `no-store`; refetch on filter/search/page change     | paginated daily status table                 |
 | `GET /daily-status/members/:id` | `no-store`                                           | member messages and status                   |
@@ -3332,7 +3395,7 @@ Show a "~N minutes remaining" estimate from `outstanding / dmPerSecond` (from `G
 
 ## 12. The public attendance form (separate app)
 
-Different deployment, different origin (`ATTENDANCE_FORM_URL`), **no auth at all**. This is the one place browser-direct calls to the backend are correct: `verify-user` fires on a keystroke debounce, and routing every keystroke through the Next server would double the latency for no security gain (the endpoint is public by design).
+Different deployment, different origin (`ATTENDANCE_FORM_URL`), **no auth at all**. This is the one place browser-direct calls to the backend are correct: `verify-user` and `verify-email` both fire on a keystroke debounce, and routing every keystroke through the Next server would double the latency for no security gain (both endpoints are public by design).
 
 Use `NEXT_PUBLIC_API_BASE_URL` here, and make sure the form's origin is in the backend's `ATTENDANCE_FORM_URL`.
 
@@ -3439,11 +3502,117 @@ export function DiscordHandleField() {
 }
 ```
 
+The email field uses the same live-badge pattern, against the new `verify-email` endpoint. Read `emailVerificationRequired` from `/window` on mount and skip the badge entirely when the gate is OFF.
+
+```tsx
+'use client';
+import { useEffect, useRef, useState } from 'react';
+import type { ApiResponse, VerifyEmailPayload } from '@/lib/api/types';
+
+const API = process.env.NEXT_PUBLIC_API_BASE_URL!;
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+type Badge =
+  | { kind: 'idle' | 'checking' | 'malformed' | 'error' | 'notRequired' }
+  | { kind: 'verified' }
+  | { kind: 'unknown'; message: string };
+
+export function EmailField() {
+  const [value, setValue] = useState('');
+  const [badge, setBadge] = useState<Badge>({ kind: 'idle' });
+  const abort = useRef<AbortController>(null);
+
+  useEffect(() => {
+    const address = value.trim();
+
+    if (!address) {
+      setBadge({ kind: 'idle' });
+      return;
+    }
+    if (!EMAIL.test(address)) {
+      setBadge({ kind: 'malformed' });
+      return;
+    }
+
+    setBadge({ kind: 'checking' });
+
+    const timer = setTimeout(async () => {
+      abort.current?.abort();
+      abort.current = new AbortController();
+
+      try {
+        const res = await fetch(
+          `${API}/attendance/verify-email?email=${encodeURIComponent(address)}`,
+          { signal: abort.current.signal },
+        );
+        if (res.status === 429) {
+          setBadge({ kind: 'error' });
+          return;
+        }
+
+        const json = (await res.json()) as ApiResponse<VerifyEmailPayload>;
+        // Same rule as the handle field: branch on data.verified, never on the
+        // HTTP status. An unrecognised address is still HTTP 200.
+        if (!json.data?.verified) {
+          // Show the backend's own message as the hint - that copy is what the
+          // student will also see at submit time, so they learn the rule here.
+          setBadge({ kind: 'unknown', message: json.message });
+          return;
+        }
+        // Gate is off: verified: true with emailVerificationRequired: false -
+        // the form should not nag about a check that isn't happening.
+        if (!json.data.emailVerificationRequired) {
+          setBadge({ kind: 'notRequired' });
+          return;
+        }
+        setBadge({ kind: 'verified' });
+      } catch (error) {
+        if ((error as Error).name !== 'AbortError') setBadge({ kind: 'error' });
+      }
+    }, 500);
+
+    return () => {
+      clearTimeout(timer);
+      abort.current?.abort();
+    };
+  }, [value]);
+
+  return (
+    <div>
+      <label htmlFor="email">Email address</label>
+      <input
+        id="email"
+        name="email"
+        type="email"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        autoCapitalize="none"
+        autoCorrect="off"
+        spellCheck={false}
+        aria-describedby="email-status"
+      />
+      <p id="email-status" role="status" aria-live="polite">
+        {badge.kind === 'checking' && 'Checking…'}
+        {badge.kind === 'malformed' &&
+          'Enter a valid email address.'}
+        {badge.kind === 'unknown' && badge.message}
+        {badge.kind === 'verified' && '✅ Enrolled email address'}
+        {badge.kind === 'notRequired' && ''}
+        {badge.kind === 'error' &&
+          'Could not verify right now — you can still submit.'}
+      </p>
+    </div>
+  );
+}
+```
+
 Form rules worth encoding:
 
-- **Verification is a UI affordance, not a gate.** If verify fails for a network reason, still let the student submit — `POST /submit` re-runs every check server-side and is the real enforcement point.
+- **Verification is a UI affordance, not a gate.** If either verify fails for a network reason, still let the student submit — `POST /submit` re-runs every check server-side and is the real enforcement point.
 - Handle the submit 409 (already submitted) as a **success-adjacent** state, not a red error: the student's attendance is recorded.
 - Handle the submit 404 as "you're not in the Discord server (any more)", distinct from the 400 "check what you typed".
+- Handle the submit 403 as "use the email you enrolled with" — distinct from both the 404 (handle) and the 400 (malformed). All three check different fields.
+- Skip the email-field badge entirely when `emailVerificationRequired` is `false` — the gate is off, so there is nothing to verify, and showing "✅ enrolled" on every address is misleading.
 - Show a phone-format hint (`01711000000`), and accept `+880`/`880` prefixes without rewriting what the student typed.
 - Don't block non-Latin names — `name` accepts any Unicode letters.
 
@@ -3473,8 +3642,9 @@ Print this next to the monitor.
 - [ ] Zod error messages arrive **Title Cased**. Map `errorDetails.issues[].path` to your own copy.
 - [ ] Error bodies have no `statusCode` field, and the useful text is sometimes in `errorMessage` rather than `message`.
 - [ ] `GET /attendance/verify-user` answers **200 for an unknown handle**; `POST /submit` answers **404**. Branch on `data.verified`, not the status code.
+- [ ] `GET /attendance/verify-email` answers **200 for an unrecognised address**; `POST /submit` answers **403** when the gate is armed. Same envelope as `/verify-user` — branch on `data.verified`, never on the status code.
 - [ ] `POST /submit` answers **403** when the email is not on the enrolment roster and **404** when the Discord handle is in no server. Different fields, different messages — do not collapse them.
-- [ ] Read **`emailVerificationRequired`** from `GET /attendance/window` on form mount and label the email field before the student fills the form.
+- [ ] Read **`emailVerificationRequired`** from `GET /attendance/window` (and from `/attendance/verify-email`'s response) on form mount and label the email field before the student fills the form. When it is `false`, skip the email badge entirely — there is nothing to verify and showing "✅ enrolled" on every address is misleading.
 - [ ] Never derive `YYYY-MM-DD` with `toISOString()` — use the Asia/Dhaka `Intl` helper (§5).
 - [ ] `date` on `POST /reminders/send` is **required and never inferred**. Always show the `/targets` preview and a confirmation first.
 - [ ] The reminder message cap is **1970** characters, not 2000.
@@ -3488,7 +3658,7 @@ Print this next to the monitor.
 - [ ] `POST /announcement/attendance/send` is a mass mention and irreversible. Second send today is a **409**; `{ "force": true }` is the only way past it. It also opens `#daily-update` — surface `data.channel.failed` and a `null` `data.channel.locksAt`.
 - [ ] Don't offer a close-time field on the announcement screen — `{{close_time}}` is read from the `#daily-update` schedule so the two can never disagree.
 - [ ] The announcement has **no boot reconcile**: if `today.posted` is false after `nextRunAt` passed, that day needs a manual send.
-- [ ] Debounce `verify-user` at 500 ms and abort stale requests — the budget is 60/min per IP.
+- [ ] Debounce `verify-user` and `verify-email` at 500 ms and abort stale requests — both have a 60/min per IP budget.
 - [ ] Don't auto-retry `POST /submit` — 5 per 15 min per IP is the entire budget.
 - [ ] Surface `dailyUpdate.ingestionEnabled === false`, `lastSync.guardTripped`, `scheduler.lastRun.error`, `lastFallback.missingPermission`, and the announcement's `scheduler.lastOutcome` — each is an otherwise-invisible outage.
 - [ ] `DM_CLOSED` is not a failure; label it "DMs closed — mentioned in channel".

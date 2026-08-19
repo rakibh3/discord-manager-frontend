@@ -669,6 +669,20 @@ export type VerifyUserPayload = {
   servers?: (ServerRef & { alreadySubmitted: boolean })[];
 };
 
+/** `GET /attendance/verify-email` answers **200 even for an unrecognised
+ *  address** — branch on `verified`. The same "always 200" rule as `/verify-user`,
+ *  the same `data.verified` shape, but answers whether the address is on the
+ *  enrolled roster rather than whether a handle is in a server.
+ *
+ *  `emailVerificationRequired` says whether the roster gate is currently armed.
+ *  When it is `false`, every well-formed address returns `verified: true` —
+ *  the form should not nag about a check that is not happening. */
+export type VerifyEmailPayload = {
+  verified: boolean;
+  attendanceDate: string;
+  emailVerificationRequired: boolean;
+};
+
 export type SubmitAttendancePayload = {
   attendanceDate: string;
   submittedAt: string;

@@ -31,11 +31,7 @@ export default async function AttendancePage() {
       {closed ? (
         <WindowClosed attendanceWindow={attendanceWindow} />
       ) : (
-        <AttendanceForm
-          emailVerificationRequired={
-            attendanceWindow?.emailVerificationRequired ?? false
-          }
-        />
+        <AttendanceForm />
       )}
 
       {/* Only meaningful next to a form the student can actually submit — after

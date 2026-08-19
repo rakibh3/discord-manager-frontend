@@ -26,6 +26,12 @@
       "type": "string"
     },
     {
+      "key": "attendanceEmail",
+      "value": "",
+      "type": "string",
+      "description": "Email address of an enrolled student. Used by verify-email and submit when roster enforcement is armed. Leave empty to run verify-email against an unknown address."
+    },
+    {
       "key": "reminderDate",
       "value": "",
       "type": "string",
@@ -1003,7 +1009,7 @@
     },
     {
       "name": "Attendance (Public)",
-      "description": "The web attendance form's public endpoints. These are the ONLY routes in the API with no auth middleware - students are not `users` rows and have no credential to present. Two things stand in for authentication on verify and submit: the handle must resolve to a member currently in the guild, and the caller must be within its per-IP budget (60/min on window & verify-user, 5/15min on submit). Set the {{attendanceUsername}} variable to a real synced member's handle before running these.",
+      "description": "The web attendance form's public endpoints. These are the ONLY routes in the API with no auth middleware - students are not `users` rows and have no credential to present. Two things stand in for authentication on verify and submit: the handle must resolve to a member currently in the guild and (when roster enforcement is armed) the email must be on the active enrolment list; the caller must also be within its per-IP budget (60/min on window, verify-user, and verify-email; 5/15min on submit). Set the {{attendanceUsername}} and {{attendanceEmail}} variables before running these.",
       "item": [
         {
           "name": "Get Attendance Window",
@@ -1173,6 +1179,123 @@
           }
         },
         {
+          "name": "Verify Email - Enrolled",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// These endpoints are public: students have no account to log in with.",
+                  "// The collection-level pre-request adds an Authorization header to every",
+                  "// request, so remove it here to prove these work with no credentials.",
+                  "pm.request.headers.remove('Authorization');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const jsonData = pm.response.json();",
+                  "",
+                  "pm.test('Email accepted as enrolled', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(jsonData.success).to.be.true;",
+                  "    pm.expect(jsonData.data.verified).to.be.true;",
+                  "    pm.expect(jsonData.data.emailVerificationRequired).to.be.true;",
+                  "    pm.expect(jsonData.data.attendanceDate).to.match(/^\\d{4}-\\d{2}-\\d{2}$/);",
+                  "});",
+                  "",
+                  "// Only meaningful when the roster gate is armed. With it off the endpoint",
+                  "// answers verified:true regardless of membership - data.emailVerificationRequired",
+                  "// tells the form there is nothing to check.",
+                  "pm.test('Rate limit headers present', function () {",
+                  "    pm.expect(pm.response.headers.has('RateLimit-Limit')).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/attendance/verify-email?email={{attendanceEmail}}",
+            "description": "Live roster-membership check backing the form's email badge. The address is normalized first (trimmed, lowercased) so a student pasting from a chat message that picked up trailing whitespace still resolves.\n\nReturns 200 with `data.verified` true/false - NOT 4xx - because 'not enrolled' is the routine answer the form has to render either way as a hint. `data.emailVerificationRequired` mirrors the gate the submit endpoint will check, so a form that only calls this endpoint still knows whether the rule is armed.\n\nWhen the gate is OFF the endpoint reports `verified: true` for every well-formed address and `emailVerificationRequired: false`. The form should not nag about a check that isn't happening."
+          }
+        },
+        {
+          "name": "Verify Email - Not Enrolled",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// These endpoints are public: students have no account to log in with.",
+                  "// The collection-level pre-request adds an Authorization header to every",
+                  "// request, so remove it here to prove these work with no credentials.",
+                  "pm.request.headers.remove('Authorization');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const jsonData = pm.response.json();",
+                  "",
+                  "pm.test('Unknown email answered, not errored', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(jsonData.data.verified).to.be.false;",
+                  "    pm.expect(jsonData.data.emailVerificationRequired).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/attendance/verify-email?email=ghost-not-on-roster@example.com",
+            "description": "A well-formed email that is not on the active enrolment roster. Still 200; `data.verified` is false.\n\nA deactivated/removed entry gets this same response. That collapse is deliberate - both outcomes block submission anyway, and keeping them indistinguishable means this endpoint cannot be used to confirm that a particular person used to be enrolled.\n\nThe form should render the response's `message` as an inline hint ('please enter your registered email')."
+          }
+        },
+        {
+          "name": "Verify Email - Invalid Format",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// These endpoints are public: students have no account to log in with.",
+                  "// The collection-level pre-request adds an Authorization header to every",
+                  "// request, so remove it here to prove these work with no credentials.",
+                  "pm.request.headers.remove('Authorization');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Malformed email rejected before any lookup', function () {",
+                  "    pm.response.to.have.status(400);",
+                  "    pm.expect(pm.response.json().success).to.be.false;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/attendance/verify-email?email=not-an-email",
+            "description": "A format error is a 400 and a DIFFERENT outcome from 'not enrolled' (200, verified:false). The form must tell 'fix your typing' (400) apart from 'use the email you enrolled with' (200 + verified:false) so the student knows which input to fix."
+          }
+        },
+        {
           "name": "Submit Attendance",
           "event": [
             {
@@ -1216,7 +1339,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Rakib Hasan\",\n  \"phone\": \"01711000000\",\n  \"email\": \"rakib@example.com\",\n  \"discordUsername\": \"{{attendanceUsername}}\"\n}",
+              "raw": "{\n  \"name\": \"Rakib Hasan\",\n  \"phone\": \"01711000000\",\n  \"email\": \"{{attendanceEmail}}\",\n  \"discordUsername\": \"{{attendanceUsername}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1268,7 +1391,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Rakib Hasan\",\n  \"phone\": \"01711000000\",\n  \"email\": \"rakib@example.com\",\n  \"discordUsername\": \"{{attendanceUsername}}\"\n}",
+              "raw": "{\n  \"name\": \"Rakib Hasan\",\n  \"phone\": \"01711000000\",\n  \"email\": \"{{attendanceEmail}}\",\n  \"discordUsername\": \"{{attendanceUsername}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"

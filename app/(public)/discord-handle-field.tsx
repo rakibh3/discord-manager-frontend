@@ -1,7 +1,7 @@
 "use client";
 
 import { CheckCircle2, CircleAlert, Info, Loader2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -28,6 +28,15 @@ export type HandleBadge =
   | { kind: "duplicate"; date: string }
   | { kind: "error"; retryAfter: number | null };
 
+/** Whether the live badge says the handle is good for submission right now. A
+ *  `duplicate` handle is already a successful submission for the day, so it is
+ *  treated as verified for gating purposes — the form will still 409 on submit,
+ *  which is the right success-adjacent outcome. A network error, an `unknown`
+ *  handle, or a still-`checking` state are not. */
+export function isHandleVerified(badge: HandleBadge): boolean {
+  return badge.kind === "verified" || badge.kind === "duplicate";
+}
+
 /** Servers this handle belongs to that still have no row for today.
  *
  *  ⚠️ The top-level `alreadySubmitted` is true only when **every** server has
@@ -38,17 +47,23 @@ function pendingServers(payload: VerifyUserPayload) {
 }
 
 /** Live Discord username verification, called browser-direct to avoid doubling
- *  the latency. Answers 200 either way, and never gates submission. */
+ *  the latency. Answers 200 either way.
+ *
+ *  Reports the live verdict to the parent via `onVerifiedChange(boolean)` so a
+ *  gating submit button can disable itself when the handle is still being
+ *  checked, is unknown, or has not been entered yet. */
 export function DiscordHandleField({
   value,
   onChange,
   error,
   fieldId,
+  onVerifiedChange,
 }: {
   value: string;
   onChange: (value: string) => void;
   error?: string;
   fieldId: string;
+  onVerifiedChange?: (verified: boolean) => void;
 }) {
   const abortRef = useRef<AbortController | null>(null);
 
@@ -65,16 +80,22 @@ export function DiscordHandleField({
   // locked out. Catching it here also spares the per-IP rate-limit budget.
   const malformed = handle !== "" && !DISCORD_USERNAME_REGEX.test(handle);
 
-  const badge: HandleBadge =
-    handle === ""
-      ? { kind: "idle" }
-      : malformed
-        ? { kind: "malformed" }
-        : !API_BASE
-          ? { kind: "error", retryAfter: null }
-          : remote?.handle === handle
-            ? remote.badge
-            : { kind: "checking" };
+  // `useMemo` keeps the badge referentially stable across renders that don't
+  // change inputs, so the parent `useEffect` that reports the verdict only
+  // fires when the verdict actually changes.
+  const badge: HandleBadge = useMemo(
+    () =>
+      handle === ""
+        ? { kind: "idle" }
+        : malformed
+          ? { kind: "malformed" }
+          : !API_BASE
+            ? { kind: "error", retryAfter: null }
+            : remote?.handle === handle
+              ? remote.badge
+              : { kind: "checking" },
+    [handle, malformed, remote],
+  );
 
   useEffect(() => {
     if (handle === "" || malformed || !API_BASE) return;
@@ -140,6 +161,13 @@ export function DiscordHandleField({
     // Keyed on the *normalized* handle, so retyping the same handle with
     // different casing or padding does not spend another request.
   }, [handle, malformed]);
+
+  // Report the verdict to the parent so it can gate submit. This effect runs
+  // synchronously (no debounce) — the parent already has the value, and a
+  // re-render here wants to flow through immediately.
+  useEffect(() => {
+    onVerifiedChange?.(isHandleVerified(badge));
+  }, [badge, onVerifiedChange]);
 
   const statusId = `${fieldId}-status`;
   const guidanceId = `${fieldId}-guidance`;
@@ -226,7 +254,7 @@ export function DiscordHandleField({
             </Avatar>
             <span className="flex flex-col gap-0.5">
               <span>
-                ✅ {member.displayName ?? member.discordUsername} — সার্ভারে
+                ✅ {member.displayName ?? member.discordUsername} - সার্ভারে
                 পাওয়া গেছে।
               </span>
               {/*
@@ -240,7 +268,7 @@ export function DiscordHandleField({
                   আপনি {badge.payload.servers?.length}টি সার্ভারে আছেন। একবার জমা
                   দিলেই সবগুলোর জন্য attendance রেকর্ড হবে
                   {pendingServers(badge.payload).length <
-                  (badge.payload.servers?.length ?? 0)
+                    (badge.payload.servers?.length ?? 0)
                     ? ` (${pendingServers(badge.payload).length}টি এখনও বাকি)`
                     : ""}
                   ।

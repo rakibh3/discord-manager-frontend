@@ -1,9 +1,10 @@
 "use client";
 
-import { CheckCircle2, Send } from "lucide-react";
+import { CheckCircle2, CircleAlert, Send } from "lucide-react";
 import { useId, useState } from "react";
 
 import { DiscordHandleField } from "./discord-handle-field";
+import { EmailField } from "./email-field";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -50,15 +51,17 @@ type Values = {
 
 const EMPTY: Values = { name: "", phone: "", email: "", discordUsername: "" };
 
-export function AttendanceForm({
-  emailVerificationRequired = false,
-}: {
-  emailVerificationRequired?: boolean;
-}) {
+export function AttendanceForm() {
   const [values, setValues] = useState<Values>(EMPTY);
   const [errors, setErrors] = useState<Partial<Record<keyof Values, string>>>({});
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // Live verification verdicts from the email and handle fields. `null` means
+  // "no answer yet" — the user has not finished typing or the debounce has not
+  // fired. Both must be `true` for submit to be enabled.
+  const [handleVerified, setHandleVerified] = useState<boolean | null>(null);
+  const [emailVerified, setEmailVerified] = useState<boolean | null>(null);
 
   const nameId = useId();
   const phoneId = useId();
@@ -70,11 +73,83 @@ export function AttendanceForm({
     setErrors((current) => ({ ...current, [field]: undefined }));
   };
 
-  // Deliberately no verification state: the badge is informational and never
-  // gates submit, and the write path re-runs every check server-side.
+  // Reset the verdict any time the user starts typing again — the previous
+  // "good" answer was for the value before this keystroke, not for the value
+  // after. Without this, swapping a verified handle for an unknown one would
+  // leave the submit button enabled until the next debounce settles.
+  const setHandleField = (value: string) => {
+    setField("discordUsername", value);
+    setHandleVerified(null);
+  };
+  const setEmailField = (value: string) => {
+    setField("email", value);
+    setEmailVerified(null);
+  };
+
+  // What is currently blocking submit, in display order. Returns the first
+  // active block, or `null` when nothing is in the way. Used by the helper
+  // text under the submit button so the student always knows what to fix.
+  const blockingReason = ((): string | null => {
+    // Required-field checks first — a missing value blocks before any
+    // verification could even fire.
+    if (!values.name.trim()) return "আপনার নাম লিখুন।";
+    if (!values.phone.trim()) return "ফোন নম্বর লিখুন।";
+    if (!values.email.trim()) return "ইমেইল ঠিকানা লিখুন।";
+    if (!values.discordUsername.trim()) return "Discord Username লিখুন।";
+
+    // Schema-level rules (length, regex). The fields above will already have
+    // been entered; this catches e.g. an empty-after-trim phone or a
+    // malformed name.
+    const parsed = attendanceSchema.safeParse(values);
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      const field = first?.path[0] as keyof Values | undefined;
+      if (field === "phone") return "ফোন নম্বরের ফরম্যাট ঠিক করুন।";
+      if (field === "name") return "নামের ফরম্যাট ঠিক করুন।";
+      if (field === "email") return "ইমেইল ঠিকানার ফরম্যাট ঠিক করুন।";
+      if (field === "discordUsername")
+        return "Discord Username-এর ফরম্যাট ঠিক করুন।";
+    }
+
+    // Live verification — both must come back as `true` before submit unlocks.
+    // `null` means the debounce is still pending or the request failed without
+    // a verdict; either way, do not let the button fire yet.
+    if (handleVerified === null)
+      return "Discord Username যাচাই হচ্ছে… (Checking Discord handle…)";
+    if (!handleVerified)
+      return "Discord Username সার্ভারে পাওয়া যাচ্ছে না - সঠিক Username লিখুন।";
+    if (emailVerified === null)
+      return "ইমেইল যাচাই হচ্ছে… (Checking email…)";
+    if (!emailVerified)
+      return "এই ইমেইল এনরোলমেন্ট রোস্টারে নেই — কোর্সে যে ইমেইল দিয়ে ভর্তি হয়েছিলেন সেটি লিখুন।";
+
+    return null;
+  })();
+
+  const canSubmit = blockingReason === null && !submitting;
+
   const submit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (submitting) return;
+
+    // Defence in depth: even with the button disabled, a paste-then-submit
+    // keystroke or browser autofill could bypass it. Re-check the live
+    // verdicts here so a click that somehow fires still bounces.
+    if (handleVerified !== true) {
+      setErrors((current) => ({
+        ...current,
+        discordUsername:
+          "আগে একটি সচল Discord Username যাচাই করুন — handle-এর পাশে ✅ দেখা যাবে।",
+      }));
+      return;
+    }
+    if (emailVerified !== true) {
+      setErrors((current) => ({
+        ...current,
+        email: "আগে একটি enrolled ইমেইল যাচাই করুন — ফি�্ডের পাশে ✅ দেখা যাবে।",
+      }));
+      return;
+    }
 
     const parsed = attendanceSchema.safeParse(values);
     if (!parsed.success) {
@@ -366,61 +441,59 @@ export function AttendanceForm({
               </FieldDescription>
             </Field>
 
-            <Field data-invalid={errors.email ? true : undefined}>
-              <FieldLabel htmlFor={emailId}>
-                Email <span aria-hidden>*</span>
-                {emailVerificationRequired ? (
-                  <span className="text-muted-foreground ml-1.5 text-xs font-normal">
-                    (Enrolled email)
-                  </span>
-                ) : null}
-              </FieldLabel>
-              <Input
-                id={emailId}
-                name="email"
-                type="email"
-                value={values.email}
-                onChange={(event) => setField("email", event.target.value)}
-                required
-                inputMode="email"
-                autoComplete="email"
-                autoCapitalize="none"
-                autoCorrect="off"
-                spellCheck={false}
-                placeholder="you@example.com"
-                aria-invalid={errors.email ? true : undefined}
-                aria-describedby={`${emailId}-hint`}
-              />
-              <FieldDescription id={`${emailId}-hint`}>
-                {errors.email ??
-                  (emailVerificationRequired
-                    ? "কোর্সে এনরোল করার সময় যে ইমেইল ব্যবহার করেছিলেন সেটি লিখুন।"
-                    : "একটি সচল ইমেইল ঠিকানা।")}
-              </FieldDescription>
-            </Field>
+            <EmailField
+              fieldId={emailId}
+              value={values.email}
+              onChange={setEmailField}
+              error={errors.email}
+              onVerifiedChange={setEmailVerified}
+            />
 
             <DiscordHandleField
               fieldId={handleId}
               value={values.discordUsername}
-              onChange={(value) => setField("discordUsername", value)}
+              onChange={setHandleField}
               error={errors.discordUsername}
+              onVerifiedChange={setHandleVerified}
             />
 
             <Field>
               {/*
-                Disabled only while a request is in flight. Never disabled
-                because verification failed — a network blip must not lock a
-                legitimate student out, and the write path re-checks everything
-                anyway.
+                The button is disabled until BOTH the Discord handle and (when
+                the roster gate is armed) the email are confirmed verified by
+                the live badge. `blockingReason` is the single source of truth
+                for what is gating the form, and is also rendered below the
+                button so a locked-out student always knows what to fix.
+                Submit also re-checks the live verdicts — defence in depth
+                against paste-and-click or browser autofill submitting the
+                form before the callback fires.
               */}
-              <Button type="submit" size="lg" disabled={submitting}>
+              <Button type="submit" size="lg" disabled={!canSubmit}>
                 {submitting ? (
                   <Spinner data-icon="inline-start" />
                 ) : (
                   <Send data-icon="inline-start" />
                 )}
-                {submitting ? "জমা দেওয়া হচ্ছে…" : "Attendance জমা দিন"}
+                {submitting ? "জমা দেওয়া হ�্ছে…" : "Attendance জমা দিন"}
               </Button>
+
+              {/*
+                Helper text under the button. Always rendered (when there is
+                something to say) so the student is not left wondering why
+                the button is unresponsive. Uses the same `aria-live="polite"`
+                rhythm as the field badges above.
+              */}
+              {blockingReason && !submitting ? (
+                <p
+                  id="submit-blocking"
+                  role="status"
+                  aria-live="polite"
+                  className="text-muted-foreground flex items-start gap-2 text-sm"
+                >
+                  <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
+                  <span>{blockingReason}</span>
+                </p>
+              ) : null}
             </Field>
           </FieldGroup>
         </form>

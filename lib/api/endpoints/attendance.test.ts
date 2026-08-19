@@ -21,6 +21,7 @@ mock.module("next/navigation", () => ({
 const {
   getAttendanceWindow,
   verifyDiscordUsername,
+  verifyEmail,
   submitAttendance,
 } = await import("@/lib/api/endpoints/attendance");
 
@@ -101,6 +102,22 @@ describe("attendance public endpoints", () => {
 
     expect(res).toEqual(mockVerify);
     expect(calls[0].url).toBe("http://backend.test/api/attendance/verify-user?username=rakib_dev");
+    expect(calls[0].authorization).toBeNull();
+  });
+
+  test("verifyEmail calls /attendance/verify-email anonymously", async () => {
+    const mockVerify = {
+      verified: true,
+      attendanceDate: "2026-08-18",
+      emailVerificationRequired: true,
+    };
+
+    install(() => json(200, { success: true, statusCode: 200, data: mockVerify }));
+
+    const res = await verifyEmail("rakib@example.com");
+
+    expect(res).toEqual(mockVerify);
+    expect(calls[0].url).toBe("http://backend.test/api/attendance/verify-email?email=rakib%40example.com");
     expect(calls[0].authorization).toBeNull();
   });
 
