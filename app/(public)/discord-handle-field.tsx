@@ -29,12 +29,14 @@ export type HandleBadge =
   | { kind: "error"; retryAfter: number | null };
 
 /** Whether the live badge says the handle is good for submission right now. A
- *  `duplicate` handle is already a successful submission for the day, so it is
- *  treated as verified for gating purposes — the form will still 409 on submit,
- *  which is the right success-adjacent outcome. A network error, an `unknown`
- *  handle, or a still-`checking` state are not. */
+ *  `duplicate` handle is *not* included here — it represents a submission that
+ *  has already been recorded for today, so a second click would only 409 with
+ *  no useful work. The form uses a separate signal (`onAlreadySubmittedChange`)
+ *  to disable the button and explain why, while the badge itself still surfaces
+ *  the green "already submitted" message. A network error, an `unknown` handle,
+ *  or a still-`checking` state are not verified either. */
 export function isHandleVerified(badge: HandleBadge): boolean {
-  return badge.kind === "verified" || badge.kind === "duplicate";
+  return badge.kind === "verified";
 }
 
 /** Servers this handle belongs to that still have no row for today.
@@ -51,19 +53,44 @@ function pendingServers(payload: VerifyUserPayload) {
  *
  *  Reports the live verdict to the parent via `onVerifiedChange(boolean)` so a
  *  gating submit button can disable itself when the handle is still being
- *  checked, is unknown, or has not been entered yet. */
+ *  checked, is unknown, or has not been entered yet.
+ *
+ *  When `email` is supplied, it is forwarded to `/verify-user` so the
+ *  duplicate check is **pairing-aware** — only attendance rows whose member
+ *  belongs to the paired account count as a duplicate for this email+handle
+ *  combination. The form passes its typed email so the "already submitted"
+ *  badge matches the email the student actually typed. Without it, the prior
+ *  handle-only behaviour applies (any prior row counts as a duplicate). */
 export function DiscordHandleField({
   value,
+  email,
   onChange,
   error,
   fieldId,
   onVerifiedChange,
+  onAlreadySubmittedChange,
 }: {
   value: string;
+  /** Optional — when present, the duplicate check is pairing-aware. Forwarded
+   *  to `/attendance/verify-user?email=…` so the badge tracks the email the
+   *  student actually typed, not a stale prior read. */
+  email?: string;
   onChange: (value: string) => void;
   error?: string;
   fieldId: string;
+  /** Reports the live verdict to the parent so it can gate submit. `true` only
+   *  when the handle is a real, fresh, not-yet-submitted member. `false` covers
+   *  "not a member", "still checking", and "already submitted" — the
+   *  already-submitted case is also surfaced via `onAlreadySubmittedChange` so
+   *  the form can disable the button with a precise message instead of a
+   *  generic one. */
   onVerifiedChange?: (verified: boolean) => void;
+  /** Reports whether the handle is the *already submitted for today* kind
+   *  specifically. The form uses this to disable the submit button — a second
+   *  click would only 409 with no useful work — while the badge still shows
+   *  the green "already submitted" message above. `null` means "no answer
+   *  yet", matching the verdict callback's tri-state. */
+  onAlreadySubmittedChange?: (alreadySubmitted: boolean | null) => void;
 }) {
   const abortRef = useRef<AbortController | null>(null);
 
@@ -75,6 +102,9 @@ export function DiscordHandleField({
   } | null>(null);
 
   const handle = normalizeDiscordUsername(value);
+  // Trimmed + lowercased — the same normalization the form does before submit,
+  // and what `/verify-user` and the roster gate operate on.
+  const normalizedEmail = email?.trim().toLowerCase() ?? "";
 
   // The rule must stay exactly as loose as Discord's, or real students are
   // locked out. Catching it here also spares the per-IP rate-limit budget.
@@ -111,9 +141,16 @@ export function DiscordHandleField({
       // out-of-order response for an older handle is simply never displayed.
       const settle = (next: HandleBadge) => setRemote({ handle, badge: next });
 
+      // Build the query string by hand — the verification endpoint accepts
+      // an optional `email` for pairing-aware duplicate checks. Forwarding
+      // the typed email means the badge reflects this email+handle pair, not
+      // a stale handle-only read.
+      const params = new URLSearchParams({ username: handle });
+      if (normalizedEmail) params.set("email", normalizedEmail);
+
       try {
         const response = await fetch(
-          `${API_BASE}/attendance/verify-user?username=${encodeURIComponent(handle)}`,
+          `${API_BASE}/attendance/verify-user?${params.toString()}`,
           { signal: controller.signal, cache: "no-store" },
         );
 
@@ -127,7 +164,10 @@ export function DiscordHandleField({
         }
 
         // 400 is Zod rejecting the handle's shape — distinct from a handle that
-        // is simply not in the server.
+        // is simply not in the server. A malformed email (when supplied) also
+        // lands here, and is intentionally folded into the same malformed
+        // verdict: the form must distinguish "fix your typing" from "no such
+        // handle" but the field-level fix is the same.
         if (response.status === 400) {
           settle({ kind: "malformed" });
           return;
@@ -158,9 +198,11 @@ export function DiscordHandleField({
       clearTimeout(timer);
       abortRef.current?.abort();
     };
-    // Keyed on the *normalized* handle, so retyping the same handle with
-    // different casing or padding does not spend another request.
-  }, [handle, malformed]);
+    // Keyed on the *normalized* handle + email, so retyping either input
+    // (or the email being revised by the parent) re-fires the lookup with
+    // the new pairing. Without the email in the key, the badge would lag
+    // a corrected email by one debounce.
+  }, [handle, normalizedEmail, malformed]);
 
   // Report the verdict to the parent so it can gate submit. This effect runs
   // synchronously (no debounce) — the parent already has the value, and a
@@ -168,6 +210,33 @@ export function DiscordHandleField({
   useEffect(() => {
     onVerifiedChange?.(isHandleVerified(badge));
   }, [badge, onVerifiedChange]);
+
+  // Report the already-submitted verdict separately. A duplicate handle is the
+  // single case where the verdict callback (above) returns `false` but the
+  // form should *not* treat it as "not a member" — the button needs to be
+  // disabled with a specific message, not a generic "not found" one.
+  //   `duplicate` → alreadySubmitted: true  (button off, "already submitted")
+  //   anything else with an answer → alreadySubmitted: false
+  //   no answer yet (idle / checking / malformed) → alreadySubmitted: null
+  useEffect(() => {
+    if (!onAlreadySubmittedChange) return;
+    const tri = (() => {
+      switch (badge.kind) {
+        case "duplicate":
+          return true;
+        case "idle":
+        case "checking":
+        case "malformed":
+          // "No answer yet" — let the form fall back to its own gating logic.
+          return null;
+        default:
+          // verified / unknown / error — handle is either good to submit or
+          // already blocked for an unrelated reason. Already-submitted is no.
+          return false;
+      }
+    })();
+    onAlreadySubmittedChange(tri);
+  }, [badge, onAlreadySubmittedChange]);
 
   const statusId = `${fieldId}-status`;
   const guidanceId = `${fieldId}-guidance`;
@@ -197,6 +266,15 @@ export function DiscordHandleField({
         aria-describedby={`${statusId} ${guidanceId}`}
       />
 
+      {/*
+        Error sits directly under the input — not after the live status text
+        below — so a server-side rejection reads as the field's own error and
+        stays anchored to the field instead of drifting toward the button.
+      */}
+      {error ? (
+        <FieldDescription className="text-destructive">{error}</FieldDescription>
+      ) : null}
+
       {/* Every asynchronous verdict is announced, not just shown. */}
       <p
         id={statusId}
@@ -207,7 +285,7 @@ export function DiscordHandleField({
         {badge.kind === "checking" ? (
           <>
             <Loader2 aria-hidden className="mt-0.5 size-4 shrink-0 animate-spin" />
-            <span className="text-muted-foreground">যাচাই করা হচ্ছে… (Checking…)</span>
+            <span className="text-muted-foreground">Checking…</span>
           </>
         ) : null}
 
@@ -215,9 +293,9 @@ export function DiscordHandleField({
           <>
             <CircleAlert aria-hidden className="text-destructive mt-0.5 size-4 shrink-0" />
             <span className="text-destructive">
-              এটি সঠিক ফরম্যাটে নেই। প্রোফাইলে <code>@</code> চিহ্নের পরের ছোট
-              হাতের নামটি লিখুন — শুধু ছোট হাতের অক্ষর, সংখ্যা, <code>_</code> বা{" "}
-              <code>.</code> চলবে (পরপর দুটি ডট নয়)।
+              Not in the right format. Type the lowercase name after the{" "}
+              <code>@</code> in your profile — lowercase letters, digits,{" "}
+              <code>_</code>, or <code>.</code> only (no two dots in a row).
             </span>
           </>
         ) : null}
@@ -226,8 +304,8 @@ export function DiscordHandleField({
           <>
             <CircleAlert aria-hidden className="text-destructive mt-0.5 size-4 shrink-0" />
             <span className="text-destructive">
-              এই Discord Username-টি আমাদের Discord সার্ভারে পাওয়া যায়নি। বানান
-              ঠিক আছে কিনা দেখুন, অথবা আগে সার্ভারে জয়েন করুন।
+              This Discord username was not found in our Discord servers. Check
+              the spelling, or join the server first.
             </span>
           </>
         ) : null}
@@ -236,8 +314,8 @@ export function DiscordHandleField({
           <>
             <CheckCircle2 aria-hidden className="text-success mt-0.5 size-4 shrink-0" />
             <span className="text-success">
-              আপনি {badge.date} তারিখের attendance ইতোমধ্যে জমা দিয়েছেন। নতুন করে
-              কিছু করার দরকার নেই।
+              You have already submitted attendance for {badge.date}. Nothing
+              more to do.
             </span>
           </>
         ) : null}
@@ -254,8 +332,8 @@ export function DiscordHandleField({
             </Avatar>
             <span className="flex flex-col gap-0.5">
               <span>
-                ✅ {member.displayName ?? member.discordUsername} - সার্ভারে
-                পাওয়া গেছে।
+                ✅ {member.displayName ?? member.discordUsername} - found in
+                server.
               </span>
               {/*
                 Only when it changes what the student has to do. A single server
@@ -265,13 +343,13 @@ export function DiscordHandleField({
               */}
               {(badge.payload.servers?.length ?? 0) > 1 ? (
                 <span className="text-muted-foreground">
-                  আপনি {badge.payload.servers?.length}টি সার্ভারে আছেন। একবার জমা
-                  দিলেই সবগুলোর জন্য attendance রেকর্ড হবে
+                  You are in {badge.payload.servers?.length} servers. One
+                  submission records attendance for all of them
                   {pendingServers(badge.payload).length <
                     (badge.payload.servers?.length ?? 0)
-                    ? ` (${pendingServers(badge.payload).length}টি এখনও বাকি)`
+                    ? ` (${pendingServers(badge.payload).length} still pending)`
                     : ""}
-                  ।
+                  .
                 </span>
               ) : null}
             </span>
@@ -282,63 +360,37 @@ export function DiscordHandleField({
           <>
             <CircleAlert aria-hidden className="text-muted-foreground mt-0.5 size-4 shrink-0" />
             <span className="text-muted-foreground">
-              এখন যাচাই করা যাচ্ছে না
+              Can&apos;t verify right now
               {badge.retryAfter
-                ? ` — প্রায় ${badge.retryAfter} সেকেন্ড পর আবার চেষ্টা করুন`
+                ? ` — try again in about ${badge.retryAfter} seconds`
                 : ""}
-              । তবুও আপনি ফর্ম জমা দিতে পারবেন।
+              . You can still submit the form.
             </span>
           </>
         ) : null}
       </p>
 
-      {error ? (
-        <FieldDescription className="text-destructive">{error}</FieldDescription>
-      ) : null}
-
       {/*
-        The format hint is only useful *before* the handle is verified —
-        once the badge says ✅, the student has already typed a valid format,
-        and re-displaying "this is your Username, not your Display Name"
-        wastes space and competes with the success message. The collapsible
-        stays available for the harder-case questions (where to find it /
-        pairing mismatch).
+        The "where to find your username" help is only useful *before* the
+        handle is verified — once the badge says ✅, the student has already
+        entered a valid handle. Pairing mismatch is handled by the modal in
+        the parent form on submit.
       */}
       {badge.kind === "verified" ||
       badge.kind === "duplicate" ? null : (
-        <>
-          {/*
-            The `<details>` element is block-level — it cannot legally live
-            inside a `<p>`. `FieldDescription` renders as `<p>`, so the static
-            guidance line stays in here as inline text, and the collapsible
-            sits as a sibling right after. Both share the same `guidanceId`
-            so `aria-describedby` on the input still points at one logical
-            description, and the input announces "the two answers you might
-            need" when it gets focus.
-          */}
-          <FieldDescription id={guidanceId}>
-            এটি আপনার <em>Display Name</em> নয় — Discord-এ <code>@</code> এর পরে
-            যে ছোট-হাতের নামটি আছে সেটি (<code>rakib_dev</code>-এর মতো)।
-          </FieldDescription>
-          <details className="text-muted-foreground/90 group">
-            <summary className="hover:text-foreground cursor-pointer list-none">
-              Username কোথায় পাবেন ও pairing mismatch হলে কী হবে
-            </summary>
-            <div className="mt-2 flex flex-col gap-2 pl-4">
-              <span>
-                <strong>Username কোথায় পাবেন:</strong> Discord অ্যাপের নিচে বাম
-                কোণায় আপনার প্রোফাইল ছবিতে ক্লিক করুন ➔ নামের নিচে{" "}
-                <code>@</code> এর পরের ছোট-হাতের নামটি।
-              </span>
-              <span>
-                <strong>Pairing mismatch:</strong> আপনার ইমেইলের সাথে আগে অন্য
-                একটি Username paired থাকলে জমা দিলে ৪০৩ আসবে — “আমার আসল
-                Discord Username দিতে পারছি না” টিক দিলে current handle দিয়েই
-                জমা হবে এবং admin যাচাই করবেন।
-              </span>
-            </div>
-          </details>
-        </>
+        <details id={guidanceId} className="text-muted-foreground/90 group">
+          <summary className="hover:text-foreground cursor-pointer list-none">
+            Where to find your username
+          </summary>
+          <div className="mt-2 flex flex-col gap-2 pl-4">
+            <span>
+              <strong>Where to find your username:</strong> In the Discord
+              app, click your profile picture in the bottom-left corner ➔
+              the lowercase name after the <code>@</code> shown under your
+              name.
+            </span>
+          </div>
+        </details>
       )}
     </Field>
   );

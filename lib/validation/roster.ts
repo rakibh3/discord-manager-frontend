@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { PHONE_REGEX } from "./attendance";
+
+/** Bangladeshi mobile: `01711000000`, `+8801711000000` or `8801711000000`.
+ *  Kept local to the admin-side roster entry validation — the public attendance
+ *  form no longer collects phone numbers (those come from the matched roster
+ *  entry on the server). */
+const PHONE_REGEX = /^(?:\+?880|0)1[3-9]\d{8}$/;
 
 /** Validation for editing a single roster entry. */
 export const rosterEntryEditSchema = z

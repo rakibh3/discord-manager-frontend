@@ -692,16 +692,23 @@ export type SubmitAttendancePayload = {
    *  carries `recorded` (was written by this request) and `alreadySubmitted`
    *  (was already on file from an earlier submission). */
   servers?: (ServerRef & { recorded: boolean; alreadySubmitted: boolean })[];
+  /** On a 201, the attendance row was written. On a 202 (`cannotEnterRealDiscordUsername`
+   *  on a paired-but-mismatched handle), today's attendance is NOT recorded —
+   *  a mismatch report is queued instead. The branch renders a different card. */
+  attendanceRecorded?: boolean;
+  /** `true` only on the 202 report-only path. The student cannot view the
+   *  report — the only signal back is this flag combined with the HTML status. */
+  reportQueued?: boolean;
 };
 
 export type AttendanceSubmitInput = {
-  name: string;
-  phone: string;
   email: string;
   discordUsername: string;
   /** When `true`, the backend accepts a Discord handle that does not match the
    *  pairing on file for this email and queues a mismatch report for an admin
-   *  to review. The byte-for-byte response is the same as a normal submit. */
+   *  to review. The response is a 202 with `attendanceRecorded: false` and
+   *  `reportQueued: true` — today's attendance is NOT recorded against the
+   *  report; the form must render a different card on this branch. */
   cannotEnterRealDiscordUsername?: boolean;
 };
 
@@ -1098,26 +1105,28 @@ export type RosterStatusRangeFigures = {
   missedBothDays: number;
 };
 
+/** Date-mode payload — the meta block carries only what was asked for. Range
+ *  fields (`from`/`to`/`daysOfWeek`/`daysInRange`) are NOT echoed here. */
 export type RosterStatusDateCountsPayload = {
   meta: {
     mode: "date";
     date: string;
-    from?: string;
-    to?: string;
-    daysInRange?: number;
-    daysOfWeek?: number[] | null;
   };
   counts: RosterStatusDateFigures;
 };
 
+/** Range-mode payload — the meta block echoes `from`, `to`, `daysOfWeek`, and
+ *  `daysInRange` so the figure always travels with its denominator. ⚠️
+ *  `daysOfWeek` is an admin assertion, not a record of when the channel was
+ *  actually open — the system does not store that history. */
 export type RosterStatusRangeCountsPayload = {
   meta: {
     mode: "range";
-    date?: string;
     from: string;
     to: string;
-    daysInRange?: number;
-    daysOfWeek?: number[] | null;
+    /** `null` means every day in the span counted. */
+    daysOfWeek: number[] | null;
+    daysInRange: number;
   };
   counts: RosterStatusRangeFigures;
 };

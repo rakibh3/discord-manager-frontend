@@ -22,13 +22,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
+import { Field, FieldGroup } from "@/components/ui/field";
 import { Spinner } from "@/components/ui/spinner";
 import type {
   ApiResponse,
@@ -44,6 +38,10 @@ const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL;
 
 type Outcome =
   | { kind: "success"; payload: SubmitAttendancePayload }
+  /** The 202 branch: today's attendance is NOT recorded, a mismatch report is
+   *  queued for an admin to review. The form must render a clearly different
+   *  card — a "Attendance recorded" message on this branch would be a lie. */
+  | { kind: "report-queued"; payload: SubmitAttendancePayload }
   | { kind: "already"; message: string }
   | { kind: "not-member" }
   | { kind: "not-enrolled"; message?: string }
@@ -52,19 +50,15 @@ type Outcome =
   | { kind: "error"; message: string };
 
 type Values = {
-  name: string;
-  phone: string;
   email: string;
   discordUsername: string;
   /** Ticked when the student's Discord pairing does not match the on-file
-   *  record. Tells the backend to record the submission anyway and queue a
-   *  mismatch report for an admin to review. */
+   *  record. On a paired entry with a mismatched handle the submission is
+   *  NOT recorded as today's attendance — a mismatch report is queued. */
   cannotEnterRealDiscordUsername: boolean;
 };
 
 const EMPTY: Values = {
-  name: "",
-  phone: "",
   email: "",
   discordUsername: "",
   cannotEnterRealDiscordUsername: false,
@@ -84,10 +78,16 @@ export function AttendanceForm({
   // "no answer yet" — the user has not finished typing or the debounce has not
   // fired. Both must be `true` for submit to be enabled.
   const [handleVerified, setHandleVerified] = useState<boolean | null>(null);
+  // Tri-state for the handle's "already submitted" verdict, reported separately
+  // from `handleVerified` so a duplicate result can disable the button with a
+  // precise message (the badge above already shows the green "already
+  // submitted" line). `null` means "no answer yet" — the form should not block
+  // on this signal alone; `handleVerified` already covers the gating path.
+  const [handleAlreadySubmitted, setHandleAlreadySubmitted] = useState<
+    boolean | null
+  >(null);
   const [emailVerified, setEmailVerified] = useState<boolean | null>(null);
 
-  const nameId = useId();
-  const phoneId = useId();
   const emailId = useId();
   const handleId = useId();
 
@@ -95,7 +95,6 @@ export function AttendanceForm({
   // keyboard and screen-reader users otherwise have to scroll back up to read
   // what the server said, which is the entire point of the alert.
   const alertRef = useRef<HTMLDivElement | null>(null);
-  const reportButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const setField = (field: keyof Values, value: string | boolean) => {
     setValues((current) => ({ ...current, [field]: value }));
@@ -108,7 +107,12 @@ export function AttendanceForm({
   // leave the submit button enabled until the next debounce settles.
   const setHandleField = (value: string) => {
     setField("discordUsername", value);
+    // Reset every verdict that referenced the previous handle — including the
+    // duplicate verdict, which was for the *prior* handle and would otherwise
+    // leave the button stuck on "already submitted" if the new handle is a
+    // fresh, not-yet-submitted member.
     setHandleVerified(null);
+    setHandleAlreadySubmitted(null);
   };
   const setEmailField = (value: string) => {
     setField("email", value);
@@ -119,22 +123,27 @@ export function AttendanceForm({
   // active block, or `null` when nothing is in the way. Used by the helper
   // text under the submit button so the student always knows what to fix.
   const blockingReason = ((): string | null => {
+    // "Already submitted" wins over every other verdict — the handle field's
+    // green badge already says it, but the gating text under the button needs
+    // to repeat it so a student scanning for "why is the button off?" lands
+    // on the right reason. Checked before "not a member" because a typing
+    // student with a stale `unknown` verdict on a duplicate handle would
+    // otherwise see the wrong copy.
+    if (handleAlreadySubmitted === true) {
+      return "You have already submitted attendance for today.";
+    }
+
     // Required-field checks first — a missing value blocks before any
     // verification could even fire.
-    if (!values.name.trim()) return "Enter your full name.";
-    if (!values.phone.trim()) return "Enter your phone number.";
     if (!values.email.trim()) return "Enter your email address.";
     if (!values.discordUsername.trim()) return "Enter your Discord username.";
 
-    // Schema-level rules (length, regex). The fields above will already have
-    // been entered; this catches e.g. an empty-after-trim phone or a
-    // malformed name.
+    // Schema-level rules (regex). The fields above will already have been
+    // entered; this catches a malformed email or username.
     const parsed = attendanceSchema.safeParse(values);
     if (!parsed.success) {
       const first = parsed.error.issues[0];
       const field = first?.path[0] as keyof Values | undefined;
-      if (field === "phone") return "Fix the phone number format.";
-      if (field === "name") return "Fix the name format.";
       if (field === "email") return "Fix the email address format.";
       if (field === "discordUsername")
         return "Fix the Discord username format.";
@@ -164,17 +173,17 @@ export function AttendanceForm({
   // would be hostile.
   useEffect(() => {
     if (!outcome) return;
-    if (outcome.kind === "success") return;
+    if (outcome.kind === "success" || outcome.kind === "report-queued") return;
     alertRef.current?.focus();
   }, [outcome]);
 
   const submit = async (
     event?: React.FormEvent<HTMLFormElement> | React.MouseEvent<HTMLButtonElement>,
     /** Modal-triggered resubmit sends the flag; the form's own submit does not.
-     *  Passed as an argument rather than read from `pendingReport` so the
-     *  click handler's React state updates don't race the read inside this
-     *  function — without it, the flag is queued but the request still ships
-     *  with `false`, and the backend returns 403 again. */
+     *  Passed as an argument rather than read from state so the click handler's
+     *  React state updates don't race the read inside this function — without
+     *  it, the flag is queued but the request still ships with `false`, and
+     *  the backend returns 403 again. */
     fromMismatchReport = false,
   ) => {
     event?.preventDefault();
@@ -224,8 +233,7 @@ export function AttendanceForm({
 
     // The modal's "Report & Submit" button passes `fromMismatchReport=true`
     // synchronously so the flag ships with this request even though the modal
-    // also flips `pendingReport` (which the `finally` block clears once the
-    // retry settles — see below). We OR with the field value so a manually
+    // also flips the verdict. We OR with the field value so a manually
     // preserved state also propagates if a future form gains a checkbox.
     const optIn =
       values.cannotEnterRealDiscordUsername || fromMismatchReport;
@@ -241,9 +249,21 @@ export function AttendanceForm({
         body: JSON.stringify(submitPayload),
       });
 
-      if (response.status === 201) {
+      // 201 — attendance recorded (the normal success branch)
+      // 202 — report queued, attendance NOT recorded (the mismatch branch)
+      // The status code split is preserved for backwards compatibility with
+      // older clients that only check the status; new code should read
+      // `data.attendanceRecorded` directly.
+      if (response.status === 201 || response.status === 202) {
         const json = (await response.json()) as ApiResponse<SubmitAttendancePayload>;
-        setOutcome({ kind: "success", payload: json.data });
+        // The flag is the source of truth: a 202 with `attendanceRecorded: true`
+        // is impossible, and a 201 with `attendanceRecorded: false` would mean
+        // the server contradicted itself.
+        if (json.data?.attendanceRecorded === false) {
+          setOutcome({ kind: "report-queued", payload: json.data });
+        } else {
+          setOutcome({ kind: "success", payload: json.data });
+        }
         return;
       }
 
@@ -262,7 +282,7 @@ export function AttendanceForm({
         | { message?: string; errorDetails?: { issues?: { path: string; message: string }[] } }
         | null;
 
-          // 403 splits into two cases that point at different fields:
+      // 403 splits into two cases that point at different fields:
       //   - the email is not on the enrolled student list (when verification is armed)
       //   - the Discord handle does not match the one already paired with that email
       // The two are decided by the server's message text, not by the status code.
@@ -359,85 +379,36 @@ export function AttendanceForm({
 
   if (outcome?.kind === "success") {
     return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-success flex items-center gap-2">
-            <CheckCircle2 aria-hidden />
-            Attendance recorded
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-2 text-sm">
-          <p>
-            Your attendance for <strong>{formatCivilDate(outcome.payload.attendanceDate)}</strong>{" "}
-            has been recorded.
-          </p>
-          <p className="text-muted-foreground">
-            Recorded for{" "}
-            <strong className="text-foreground">
-              {outcome.payload.member.displayName ??
-                outcome.payload.member.discordUsername}
-            </strong>{" "}
-            ({outcome.payload.member.discordUsername}) at{" "}
-            {formatDhaka(outcome.payload.submittedAt, "time")}.
-          </p>
-          {/*
-            One submission covers every server the handle belongs to, in one
-            transaction — the student is never asked to pick one. Naming the
-            servers is the only way they can tell that happened.
+      <SuccessCard
+        title="Attendance recorded"
+        variant="success"
+        attendanceDate={outcome.payload.attendanceDate}
+        submittedAt={outcome.payload.submittedAt}
+        member={outcome.payload.member}
+        servers={outcome.payload.servers ?? []}
+      />
+    );
+  }
 
-            Each server carries its own `recorded` (was written by this request)
-            and `alreadySubmitted` (was already on file from an earlier
-            submission) flags, so a partial outcome reads accurately: this run
-            wrote to the recorded ones, the rest were already done.
-          */}
-          {(() => {
-            const servers = outcome.payload.servers ?? [];
-            if (servers.length <= 1) return null;
-
-            const recorded = servers.filter((s) => s.recorded);
-            const alreadyOnFile = servers.filter(
-              (s) => !s.recorded && s.alreadySubmitted,
-            );
-            const failed = servers.filter(
-              (s) => !s.recorded && !s.alreadySubmitted,
-            );
-
-            return (
-              <div className="text-muted-foreground flex flex-col gap-1.5">
-                {recorded.length > 0 ? (
-                  <p>
-                    These{" "}
-                    <strong className="text-foreground">
-                      {recorded.map((s) => s.label).join(", ")}
-                    </strong>{" "}
-                    servers were recorded by this submission.
-                  </p>
-                ) : null}
-                {alreadyOnFile.length > 0 ? (
-                  <p>
-                    <strong className="text-foreground">
-                      {alreadyOnFile.map((s) => s.label).join(", ")}
-                    </strong>{" "}
-                    — these servers already had an attendance row from an earlier submission; no further action needed.
-                  </p>
-                ) : null}
-                {failed.length > 0 ? (
-                  <p>
-                    <strong className="text-foreground">
-                      {failed.map((s) => s.label).join(", ")}
-                    </strong>{" "}
-                    — these servers did not record. Please try again later.
-                  </p>
-                ) : null}
-              </div>
-            );
-          })()}
-          <p className="text-muted-foreground">
-            If a <code>#daily-update</code>{" "}
-            post is still pending, please post it.
-          </p>
-        </CardContent>
-      </Card>
+  if (outcome?.kind === "report-queued") {
+    return (
+      <SuccessCard
+        title="Report filed — attendance not recorded today"
+        variant="warning"
+        attendanceDate={outcome.payload.attendanceDate}
+        submittedAt={outcome.payload.submittedAt}
+        member={outcome.payload.member}
+        servers={outcome.payload.servers ?? []}
+        message={
+          <>
+            Your submitted Discord username doesn&apos;t match the one paired
+            with your email. <strong>Today&apos;s attendance was not
+            recorded</strong>, but a mismatch report has been filed for an
+            admin to review. Once the pairing is fixed, you can submit
+            normally tomorrow.
+          </>
+        }
+      />
     );
   }
 
@@ -447,7 +418,7 @@ export function AttendanceForm({
       <CardHeader>
         <CardTitle>Daily Attendance</CardTitle>
         <CardDescription>
-          Submit once per day. All fields are required.
+          Submit once per day. Only your email and Discord username are needed.
         </CardDescription>
       </CardHeader>
 
@@ -504,61 +475,6 @@ export function AttendanceForm({
             ) : null}
             </div>
 
-            <Field data-invalid={errors.name ? true : undefined}>
-              <FieldLabel htmlFor={nameId}>
-                Full Name <span aria-hidden>*</span>
-              </FieldLabel>
-              <Input
-                id={nameId}
-                name="name"
-                value={values.name}
-                onChange={(event) => setField("name", event.target.value)}
-                required
-                autoComplete="name"
-                autoCapitalize="words"
-                spellCheck={false}
-                // The rule is English-only, so the keyboard hint and the copy
-                // below both have to point that way before anything is typed.
-                inputMode="text"
-                lang="en"
-                placeholder="Rakibul Hasan"
-                aria-invalid={errors.name ? true : undefined}
-                aria-describedby={`${nameId}-hint`}
-              />
-              <FieldDescription id={`${nameId}-hint`}>
-                {errors.name ??
-                  "Enter your full name in English letters (English letters only) — e.g., Rakibul Hasan."}
-              </FieldDescription>
-            </Field>
-
-            <Field data-invalid={errors.phone ? true : undefined}>
-              <FieldLabel htmlFor={phoneId}>
-                Phone Number <span aria-hidden>*</span>
-              </FieldLabel>
-              <Input
-                id={phoneId}
-                name="phone"
-                type="tel"
-                value={values.phone}
-                onChange={(event) => setField("phone", event.target.value)}
-                required
-                // Numeric keypad on mobile.
-                inputMode="tel"
-                autoComplete="tel"
-                autoCapitalize="none"
-                autoCorrect="off"
-                spellCheck={false}
-                placeholder="01711000000"
-                aria-invalid={errors.phone ? true : undefined}
-                aria-describedby={`${phoneId}-hint`}
-              />
-              {/* The format hint is visible before any error, not only after. */}
-              <FieldDescription id={`${phoneId}-hint`}>
-                {errors.phone ??
-                  "e.g., 01711000000. Starting with +880 or 880 also works."}
-              </FieldDescription>
-            </Field>
-
             <EmailField
               fieldId={emailId}
               value={values.email}
@@ -571,9 +487,18 @@ export function AttendanceForm({
             <DiscordHandleField
               fieldId={handleId}
               value={values.discordUsername}
+              // Forward the typed email so the duplicate check is
+              // pairing-aware: the badge matches the email the student
+              // actually typed, not a stale handle-only read.
+              email={values.email}
               onChange={setHandleField}
               error={errors.discordUsername}
               onVerifiedChange={setHandleVerified}
+              // The duplicate verdict is reported separately so the button
+              // can be disabled with a precise "already submitted" message
+              // instead of the generic "not a member" one. The green badge
+              // above the field is still the primary signal.
+              onAlreadySubmittedChange={setHandleAlreadySubmitted}
             />
 
             {/*
@@ -632,17 +557,22 @@ export function AttendanceForm({
         * "Cancel" dismisses the modal; the form clears its outcome so
           the student can fix the handle (or leave) and resubmit.
         * "Report & Submit" sets the opt-in flag, retries the same
-          submission, and the backend queues a mism report on success.
+          submission, and the backend queues a mismatch report on success.
+
+      On cancel, we deliberately do **not** reset `handleVerified`: the 403 was
+      about the email↔handle pairing, not the handle being a non-member. The
+      handle's `verified: true` verdict is still accurate for this exact
+      value, and resetting it would drop the gating verdict to `null` and
+      lock the button behind "Checking Discord handle…" forever (the lookup
+      only re-fires when the handle value changes, which the student may not
+      touch). If the student *does* edit the handle, the `setHandleField`
+      helper already clears the verdict on every keystroke.
     */}
     <Dialog
       open={outcome?.kind === "handle-mismatch"}
       onOpenChange={(open) => {
         if (!open && outcome?.kind === "handle-mismatch") {
           setOutcome(null);
-          // Reset the verdict: the previous handle verdict was for the
-          // pre-mismatch submission. Without this, the form stays
-          // blocked on a stale verdict.
-          setHandleVerified(null);
         }
       }}
     >
@@ -662,22 +592,26 @@ export function AttendanceForm({
             variant="outline"
             onClick={() => {
               setOutcome(null);
-              setHandleVerified(null);
+              // Do not reset `handleVerified` — see the comment on the
+              // Dialog's onOpenChange above. The handle is still a real
+              // Discord member; only the email↔handle pairing was wrong.
+              // Clearing the verdict would lock the submit button on
+              // "Checking Discord handle…" until the student retyped the
+              // handle, which they may not need to.
             }}
           >
             Cancel
           </Button>
           <Button
-            ref={reportButtonRef}
             disabled={submitting}
             onClick={() => {
               setOutcome(null);
               // Pass the flag as an argument so the request leaves the
               // browser with `cannotEnterRealDiscordUsername: true` already
-              // in the payload. Reading `pendingReport` after `setPendingReport(true)`
-              // inside the same handler would still see the stale value, so
-              // the flag would never actually ship and the modal would
-              // re-open with the same 403 message.
+              // in the payload. Reading state after a state-update inside
+              // the same handler would still see the stale value, so the
+              // flag would never actually ship and the modal would re-open
+              // with the same 403 message.
               void submit(undefined, true);
             }}
           >
@@ -688,5 +622,114 @@ export function AttendanceForm({
       </DialogContent>
     </Dialog>
     </>
+  );
+}
+
+/** The success / report-only card. Renders different chrome (`success` vs
+ *  `warning`) because the report-only branch is a *deliberate* non-record:
+ *  showing a green ✅ with "Attendance recorded" on it would be a lie. */
+function SuccessCard({
+  title,
+  variant,
+  attendanceDate,
+  submittedAt,
+  member,
+  servers,
+  message,
+}: {
+  title: string;
+  variant: "success" | "warning";
+  attendanceDate: string;
+  submittedAt: string;
+  member: SubmitAttendancePayload["member"];
+  servers: Array<{
+    guildId: string;
+    label: string;
+    recorded: boolean;
+    alreadySubmitted: boolean;
+  }>;
+  message?: React.ReactNode;
+}) {
+  const recorded = servers.filter((s) => s.recorded);
+  const alreadyOnFile = servers.filter(
+    (s) => !s.recorded && s.alreadySubmitted,
+  );
+  const failed = servers.filter(
+    (s) => !s.recorded && !s.alreadySubmitted,
+  );
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle
+          className={
+            variant === "success"
+              ? "text-success flex items-center gap-2"
+              : "text-warning flex items-center gap-2"
+          }
+        >
+          <CheckCircle2 aria-hidden />
+          {title}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2 text-sm">
+        {message ? <p>{message}</p> : null}
+        <p>
+          Your attendance for <strong>{formatCivilDate(attendanceDate)}</strong>{" "}
+          {variant === "success" ? "has been recorded" : "was filed at"}{" "}
+          {variant === "success" ? "for" : "by"}{" "}
+          <strong className="text-foreground">
+            {member.displayName ?? member.discordUsername}
+          </strong>{" "}
+          ({member.discordUsername}) at{" "}
+          {formatDhaka(submittedAt, "time")}.
+        </p>
+        {/*
+          One submission covers every server the handle belongs to, in one
+          transaction — the student is never asked to pick one. Naming the
+          servers is the only way they can tell that happened.
+
+          Each server carries its own `recorded` (was written by this request)
+          and `alreadySubmitted` (was already on file from an earlier
+          submission) flags, so a partial outcome reads accurately: this run
+          wrote to the recorded ones, the rest were already done.
+        */}
+        {servers.length > 1 ? (
+          <div className="text-muted-foreground flex flex-col gap-1.5">
+            {recorded.length > 0 ? (
+              <p>
+                These{" "}
+                <strong className="text-foreground">
+                  {recorded.map((s) => s.label).join(", ")}
+                </strong>{" "}
+                servers were recorded by this submission.
+              </p>
+            ) : null}
+            {alreadyOnFile.length > 0 ? (
+              <p>
+                <strong className="text-foreground">
+                  {alreadyOnFile.map((s) => s.label).join(", ")}
+                </strong>{" "}
+                — these servers already had an attendance row from an earlier submission; no further action needed.
+              </p>
+            ) : null}
+            {failed.length > 0 ? (
+              <p>
+                <strong className="text-foreground">
+                  {failed.map((s) => s.label).join(", ")}
+                </strong>{" "}
+                — these servers did not record. Please try again later.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+        {variant === "success" ? (
+          <p className="text-muted-foreground">
+            If a <code>#daily-update</code>{" "}
+            post is still pending, please post it.
+          </p>
+        ) : null}
+      </CardContent>
+    </Card>
   );
 }

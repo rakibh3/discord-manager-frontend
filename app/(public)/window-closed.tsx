@@ -31,8 +31,8 @@ export function WindowClosed({
         </CardTitle>
         <CardDescription className="text-base">
           {paused
-            ? "এই মুহূর্তে attendance নেওয়া বন্ধ রাখা হয়েছে।"
-            : "এখন attendance জমা দেওয়ার সময় নয়। নির্দিষ্ট সময়ে আবার আসুন।"}
+            ? "Daily attendance is paused right now."
+            : "It's not the attendance submission window right now. Please come back during the scheduled hours."}
         </CardDescription>
       </CardHeader>
 
@@ -64,16 +64,18 @@ export function WindowClosed({
             ) : null}
 
             <p className="text-muted-foreground">
-              <strong>{formatWallClock(attendanceWindow.openTime)}</strong> থেকে{" "}
-              <strong>{formatWallClock(attendanceWindow.closeTime)}</strong> পর্যন্ত attendance জমা দেওয়া
-              যাবে। এই সময়ের বাইরে ফর্মটি বন্ধ থাকে।
+              Attendance can be submitted from{" "}
+              <strong>{formatWallClock(attendanceWindow.openTime)}</strong> to{" "}
+              <strong>{formatWallClock(attendanceWindow.closeTime)}</strong>.
+              Outside of this window the form stays closed.
             </p>
           </>
         )}
 
         <p className="text-muted-foreground border-t pt-3 text-sm">
-          Attendance এবং <code>#daily-update</code> দুটোই একই সময়ের
-          মধ্যে করতে হবে। কিছু নিয়ে কনফিউশান থাকলে Discord সার্ভারে জানান।
+          Both attendance and the <code>#daily-update</code> post must be done
+          within the same window. If anything is unclear, ask in the Discord
+          server.
         </p>
       </CardContent>
     </Card>

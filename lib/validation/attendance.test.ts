@@ -4,7 +4,6 @@ import {
   attendanceSchema,
   DISCORD_USERNAME_REGEX,
   normalizeDiscordUsername,
-  PHONE_REGEX,
 } from "@/lib/validation/attendance";
 
 /** The highest-stakes validation in the app: tightening the rule by one
@@ -59,105 +58,63 @@ describe("normalizeDiscordUsername", () => {
   });
 });
 
-describe("phone rule", () => {
-  test.each(["01711000000", "+8801711000000", "8801711000000", "01911000000"])(
-    "accepts %s",
-    (phone) => {
-      expect(PHONE_REGEX.test(phone)).toBe(true);
-    },
-  );
-
-  test.each([
-    "0171100000", // one digit short
-    "017110000000", // one digit long
-    "01211000000", // operator prefix 2 is not in 3-9
-    "1711000000", // missing the leading 0
-    "+8811711000000", // wrong country code
-  ])("rejects %s", (phone) => {
-    expect(PHONE_REGEX.test(phone)).toBe(false);
-  });
-});
-
 describe("attendance schema", () => {
-  // Names are English-only by product decision, so Bengali is rejected
-  // deliberately rather than by the mark-vs-letter accident `[\p{L}\s]` makes.
-  test.each([
-    "রাকিবুল হাসান",
-    "মোঃ আবির",
-    "শাহরিয়ার রাতুল",
-  ])("rejects the Bengali name %s", (name) => {
+  // The submit body carries ONLY `email` and `discordUsername` (plus the
+  // optional mismatch flag). `name` and `phone` are no longer collected —
+  // they are sourced server-side from the matched active roster entry.
+  test("accepts a valid email + handle pair", () => {
     const result = attendanceSchema.safeParse({
-      name,
-      phone: "01711000000",
-      email: "student@example.com",
+      email: "rakib@example.com",
       discordUsername: "rakib_dev",
     });
-    expect(result.success).toBe(false);
-  });
-
-  test.each(["Rakibul Hasan", "Md Abir", "Shahriar Ratul", "Ali"])(
-    "accepts the English name %s",
-    (name) => {
-      const result = attendanceSchema.safeParse({
-        name,
-        phone: "01711000000",
-        email: "student@example.com",
-        discordUsername: "rakib_dev",
-      });
-      expect(result.success).toBe(true);
-    },
-  );
-
-  test("the rejection message names the script, not just 'letters'", () => {
-    // A student who wrote their own name in their own script needs to be told
-    // which alphabet to use — "only letters" would read as nonsense to them.
-    const result = attendanceSchema.safeParse({
-      name: "রাকিবুল হাসান",
-      phone: "01711000000",
-      email: "student@example.com",
-      discordUsername: "rakib_dev",
-    });
-    const message = result.error?.issues.find(
-      (issue) => issue.path[0] === "name",
-    )?.message;
-    expect(message).toContain("English");
+    expect(result.success).toBe(true);
+    expect(result.data?.discordUsername).toBe("rakib_dev");
   });
 
   test("normalizes the handle it submits", () => {
     const result = attendanceSchema.safeParse({
-      name: "Md Rakibul Hasan",
-      phone: "01711000000",
       email: "rakib@example.com",
       discordUsername: "@Rakib_Dev",
     });
-
     expect(result.success).toBe(true);
     // The submitted handle is the normalized form, not what was typed.
     expect(result.data?.discordUsername).toBe("rakib_dev");
   });
 
-  test("rejects a name containing digits", () => {
+  test("rejects a malformed email", () => {
     const result = attendanceSchema.safeParse({
-      name: "Rakib 2",
-      phone: "01711000000",
-      email: "rakib@example.com",
+      email: "not-an-email",
       discordUsername: "rakib_dev",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test("rejects a malformed handle", () => {
+    const result = attendanceSchema.safeParse({
+      email: "rakib@example.com",
+      discordUsername: "a..b",
     });
     expect(result.success).toBe(false);
   });
 
   test("reports each failure against its own field", () => {
     const result = attendanceSchema.safeParse({
-      name: "ab",
-      phone: "123",
       email: "not-an-email",
       discordUsername: "a..b",
     });
 
     expect(result.success).toBe(false);
     const fields = new Set(result.error?.issues.map((issue) => issue.path[0]));
-    expect(fields).toEqual(
-      new Set(["name", "phone", "email", "discordUsername"]),
-    );
+    expect(fields).toEqual(new Set(["email", "discordUsername"]));
+  });
+
+  test("the optional mismatch flag is preserved when present", () => {
+    const result = attendanceSchema.safeParse({
+      email: "rakib@example.com",
+      discordUsername: "rakib_dev",
+      cannotEnterRealDiscordUsername: true,
+    });
+    expect(result.success).toBe(true);
+    expect(result.data?.cannotEnterRealDiscordUsername).toBe(true);
   });
 });

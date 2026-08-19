@@ -121,7 +121,7 @@ describe("attendance public endpoints", () => {
     expect(calls[0].authorization).toBeNull();
   });
 
-  test("submitAttendance posts to /attendance/submit anonymously", async () => {
+  test("submitAttendance posts only email + handle (no name/phone)", async () => {
     const mockSubmitResult = {
       attendanceDate: "2026-08-18",
       submittedAt: "2026-08-18T14:00:00.000Z",
@@ -132,13 +132,13 @@ describe("attendance public endpoints", () => {
         displayName: "Rakib",
         avatarUrl: null,
       },
+      attendanceRecorded: true,
+      reportQueued: false,
     };
 
     install(() => json(201, { success: true, statusCode: 201, data: mockSubmitResult }));
 
     const res = await submitAttendance({
-      name: "Rakibul Hasan",
-      phone: "01711000000",
       email: "rakib@example.com",
       discordUsername: "rakib_dev",
     });
@@ -147,11 +147,93 @@ describe("attendance public endpoints", () => {
     expect(calls[0].url).toBe("http://backend.test/api/attendance/submit");
     expect(calls[0].method).toBe("POST");
     expect(calls[0].authorization).toBeNull();
+    // The wire body is exactly { email, discordUsername } — no name/phone.
     expect(JSON.parse(calls[0].body!)).toEqual({
-      name: "Rakibul Hasan",
-      phone: "01711000000",
       email: "rakib@example.com",
       discordUsername: "rakib_dev",
+    });
+  });
+
+  test("verifyDiscordUsername forwards the email for a pairing-aware read", async () => {
+    const mockVerify = {
+      verified: true,
+      alreadySubmitted: false,
+      attendanceDate: "2026-08-18",
+      member: {
+        id: "m1",
+        discordUserId: "u1",
+        discordUsername: "rakib_dev",
+        displayName: "Rakib",
+        avatarUrl: null,
+      },
+      servers: [
+        { guildId: "146", label: "Batch A", alreadySubmitted: false },
+      ],
+    };
+
+    install(() => json(200, { success: true, statusCode: 200, data: mockVerify }));
+
+    const res = await verifyDiscordUsername("rakib_dev", "rakib@example.com");
+
+    expect(res).toEqual(mockVerify);
+    expect(calls[0].url).toBe(
+      "http://backend.test/api/attendance/verify-user?username=rakib_dev&email=rakib%40example.com",
+    );
+    expect(calls[0].authorization).toBeNull();
+  });
+
+  test("verifyDiscordUsername omits the email when not supplied", async () => {
+    const mockVerify = {
+      verified: true,
+      alreadySubmitted: false,
+      attendanceDate: "2026-08-18",
+      member: {
+        id: "m1",
+        discordUserId: "u1",
+        discordUsername: "rakib_dev",
+        displayName: "Rakib",
+        avatarUrl: null,
+      },
+    };
+
+    install(() => json(200, { success: true, statusCode: 200, data: mockVerify }));
+
+    await verifyDiscordUsername("rakib_dev");
+
+    // Without an email, the URL must not carry an empty `email=`.
+    expect(calls[0].url).toBe("http://backend.test/api/attendance/verify-user?username=rakib_dev");
+  });
+
+  test("submitAttendance forwards the mismatch flag when set", async () => {
+    const mockSubmitResult = {
+      attendanceDate: "2026-08-18",
+      submittedAt: "2026-08-18T14:00:00.000Z",
+      member: {
+        id: "m1",
+        discordUserId: "u1",
+        discordUsername: "rakib_alt",
+        displayName: "Rakib",
+        avatarUrl: null,
+      },
+      attendanceRecorded: false,
+      reportQueued: true,
+    };
+
+    install(() => json(202, { success: true, statusCode: 202, data: mockSubmitResult }));
+
+    const res = await submitAttendance({
+      email: "rakib@example.com",
+      discordUsername: "rakib_alt",
+      cannotEnterRealDiscordUsername: true,
+    });
+
+    expect(res).toEqual(mockSubmitResult);
+    expect(res.attendanceRecorded).toBe(false);
+    expect(res.reportQueued).toBe(true);
+    expect(JSON.parse(calls[0].body!)).toEqual({
+      email: "rakib@example.com",
+      discordUsername: "rakib_alt",
+      cannotEnterRealDiscordUsername: true,
     });
   });
 });

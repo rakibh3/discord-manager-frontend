@@ -210,6 +210,15 @@ export function EmailField({
         aria-describedby={showBadge ? statusId : undefined}
       />
 
+      {/*
+        Error sits directly under the input — not after the live status text
+        below — so a server-side rejection reads as the field's own error
+        and stays anchored to the field instead of drifting toward the button.
+      */}
+      {error ? (
+        <FieldDescription className="text-destructive">{error}</FieldDescription>
+      ) : null}
+
       {showBadge ? (
         <p
           id={statusId}
@@ -220,7 +229,7 @@ export function EmailField({
           {badge.kind === "checking" ? (
             <>
               <Loader2 aria-hidden className="text-muted-foreground mt-0.5 size-4 shrink-0 animate-spin" />
-              <span className="text-muted-foreground">যাচাই করা হচ্ছে… (Checking…)</span>
+              <span className="text-muted-foreground">Checking…</span>
             </>
           ) : null}
 
@@ -228,8 +237,8 @@ export function EmailField({
             <>
               <CircleAlert aria-hidden className="text-destructive mt-0.5 size-4 shrink-0" />
               <span className="text-destructive">
-                একটি সচল ইমেইল ঠিকানা লিখুন — যেমন{" "}
-                <code>you@example.com</code>।
+                Enter a valid email address — like{" "}
+                <code>you@example.com</code>.
               </span>
             </>
           ) : null}
@@ -252,19 +261,15 @@ export function EmailField({
             <>
               <CircleAlert aria-hidden className="text-muted-foreground mt-0.5 size-4 shrink-0" />
               <span className="text-muted-foreground">
-                এখন যাচাই করা যাচ্ছে না
+                Can&apos;t verify right now
                 {badge.retryAfter
-                  ? ` — প্রায় ${badge.retryAfter} সেকেন্ড পর আবার চেষ্টা করুন`
+                  ? ` — try again in about ${badge.retryAfter} seconds`
                   : ""}
-                । তবুও আপনি ফর্ম জমা দিতে পারবেন।
+                . You can still submit the form.
               </span>
             </>
           ) : null}
         </p>
-      ) : null}
-
-      {error ? (
-        <FieldDescription className="text-destructive">{error}</FieldDescription>
       ) : null}
 
       {/* When the roster gate is armed, a non-enrolled email is refused before
@@ -273,7 +278,8 @@ export function EmailField({
           of text. */}
       {emailVerificationRequired ? (
         <FieldDescription className="text-muted-foreground/90">
-          ভর্তির সময় যে ইমেইল দিয়েছিলেন সেটিই লিখুন — অন্য ইমেইল হলে জমা হবে না।
+          Use the email you registered with during enrolment — a different
+          email will not be accepted.
         </FieldDescription>
       ) : null}
     </Field>

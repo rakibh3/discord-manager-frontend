@@ -42,8 +42,9 @@ export default async function AttendancePage() {
           a "come back later" card it would be advice about the wrong problem. */}
       {closed ? null : (
         <p className="text-muted-foreground text-center text-xs">
-          Attendance জমা দেওয়ার পর <code>#daily-update</code> চ্যানেলে আপনার
-          আপডেটটিও পোস্ট করতে ভুলবেন না — দুটোই আলাদা।
+          After submitting attendance, don&apos;t forget to post your update
+          in the <code>#daily-update</code> channel — they are two separate
+          things.
         </p>
       )}
     </div>
