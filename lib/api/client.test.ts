@@ -108,16 +108,39 @@ describe("expired access token", () => {
     ).toHaveLength(0);
   });
 
-  test("a rejected refresh clears the session and redirects to /login-admin", async () => {
+  test("a rejected refresh redirects to the session-clearing route", async () => {
     install(async (call) =>
       call.url.endsWith("/auth/refresh-token")
         ? json(401, { success: false, message: "Invalid or expired refresh token" })
         : expiredJwt(),
     );
 
-    await expect(api("/users/me")).rejects.toThrow("REDIRECT:/login-admin");
-    expect(cookieJar.has("dm_access")).toBe(false);
-    expect(cookieJar.has("dm_refresh")).toBe(false);
+    await expect(api("/users/me")).rejects.toThrow("REDIRECT:/api/auth/session-expired");
+    // The client deliberately does not clear the jar: `cookies().set()` throws
+    // during a Server Component render, so the clear happens in the route
+    // handler the redirect lands on.
+    expect(cookieJar.get("dm_access")).toBe("access-1");
+    expect(cookieJar.get("dm_refresh")).toBe("refresh-1");
+  });
+
+  test("a 404 with P2025 user not found triggers refresh and redirects if user does not exist", async () => {
+    install(async (call) =>
+      call.url.endsWith("/auth/refresh-token")
+        ? json(401, { success: false, message: "Invalid or expired refresh token" })
+        : json(404, {
+            success: false,
+            message: "Record not found",
+            errorMessage: "The requested record does not exist.",
+            errorDetails: { code: "P2025" },
+          }),
+    );
+
+    await expect(api("/reminders")).rejects.toThrow("REDIRECT:/api/auth/session-expired");
+    // The client deliberately does not clear the jar: `cookies().set()` throws
+    // during a Server Component render, so the clear happens in the route
+    // handler the redirect lands on.
+    expect(cookieJar.get("dm_access")).toBe("access-1");
+    expect(cookieJar.get("dm_refresh")).toBe("refresh-1");
   });
 });
 

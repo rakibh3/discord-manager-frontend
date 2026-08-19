@@ -5,9 +5,9 @@ import { redirect } from "next/navigation";
 import { ApiError, toApiError, toNetworkError } from "@/lib/api/errors";
 import type { ApiResponse } from "@/lib/api/types";
 import {
-  clearSession,
   readSession,
   requireSession,
+  SESSION_EXPIRED_PATH,
   writeSession,
 } from "@/lib/auth/session";
 
@@ -72,6 +72,8 @@ export async function apiRequest<T>(
   const url = buildUrl(path, query);
 
   const send = async (accessToken: string | null): Promise<Response> => {
+    const isFormData =
+      typeof FormData !== "undefined" && body instanceof FormData;
     try {
       return await fetch(url, {
         ...init,
@@ -79,7 +81,7 @@ export async function apiRequest<T>(
         // data wants. An explicit option can still override per call.
         cache: init.cache ?? "no-store",
         headers: {
-          ...(body !== undefined
+          ...(body !== undefined && !isFormData
             ? { "Content-Type": "application/json" }
             : {}),
           // ⚠️ Bare token — NO "Bearer " prefix. `auth.ts` hands the raw header
@@ -87,7 +89,12 @@ export async function apiRequest<T>(
           ...(accessToken ? { Authorization: accessToken } : {}),
           ...headers,
         },
-        body: body !== undefined ? JSON.stringify(body) : undefined,
+        body:
+          body !== undefined
+            ? isFormData
+              ? body
+              : JSON.stringify(body)
+            : undefined,
       });
     } catch (cause) {
       throw toNetworkError(cause);
@@ -104,10 +111,9 @@ export async function apiRequest<T>(
     if (!error.isAuthExpired) throw error;
 
     const refreshed = await refreshTokens();
-    if (!refreshed) {
-      await clearSessionQuietly();
-      redirect("/login-admin");
-    }
+    // Cookies cannot be cleared from here — a Server Component render throws on
+    // the write — so the clear happens in the route handler this lands on.
+    if (!refreshed) redirect(SESSION_EXPIRED_PATH);
 
     response = await send(refreshed.accessToken);
   }
@@ -174,15 +180,6 @@ function refreshTokens(): Promise<{
   })();
 
   return inFlightRefresh;
-}
-
-/** Clearing cookies is also a write, and fails mid-render for the same reason. */
-async function clearSessionQuietly(): Promise<void> {
-  try {
-    await clearSession();
-  } catch {
-    // Server Component render — `proxy.ts` will bounce the next request.
-  }
 }
 
 export { ApiError };

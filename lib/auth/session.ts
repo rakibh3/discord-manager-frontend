@@ -16,6 +16,12 @@ export const REFRESH_COOKIE = "dm_refresh";
  *  days in `auth.service.ts`, and the row is what actually governs. */
 const SEVEN_DAYS_IN_SECONDS = 60 * 60 * 24 * 7;
 
+/** The route handler that clears the cookies and then lands on `/login-admin`.
+ *  Server Components must redirect *here*, never straight at the login page:
+ *  they cannot write cookies, so `proxy.ts` would still see a session and bounce
+ *  them back to `/dashboard` — a redirect loop that reads as an endless refresh. */
+export const SESSION_EXPIRED_PATH = "/api/auth/session-expired";
+
 const cookieOptions = () =>
   ({
     httpOnly: true,

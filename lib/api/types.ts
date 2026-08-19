@@ -468,6 +468,8 @@ export type AttendanceWindow = {
   nextOpenAt: string | null;
   /** Instant the current window closes; `null` when it is not open. */
   closesAt: string | null;
+  /** Whether attendance submissions require an enrolled student email match. */
+  emailVerificationRequired?: boolean;
 };
 
 // ── Reminders ────────────────────────────────────────────────────────────────
@@ -883,3 +885,84 @@ export type DailyStatusQuery = {
 
 /** Alias for AttendanceWindow matching API_INTEGRATION.md naming */
 export type AttendanceWindowPayload = AttendanceWindow;
+
+// ── Roster (API_INTEGRATION.md §8.6A) ────────────────────────────────────────
+
+export type RosterStatusFilter = "active" | "inactive" | "all";
+
+export type RosterEntry = {
+  id: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RosterQuery = {
+  search?: string;
+  status?: RosterStatusFilter;
+  page?: number;
+  limit?: number;
+};
+
+export type RosterImportRejectedRow = {
+  rowNumber: number;
+  reason: string;
+};
+
+export type RosterImportDuplicateAddress = {
+  email: string;
+  rowNumbers: number[];
+};
+
+export type RosterImportResult = {
+  importId: string;
+  fileName: string;
+  totalRows: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  duplicates: number;
+  duplicateRowsCollapsed: number;
+  rejectedRows: RosterImportRejectedRow[];
+  duplicateAddresses: RosterImportDuplicateAddress[];
+  batchFailures?: unknown[];
+};
+
+export type RosterImportHistoryItem = {
+  id: string;
+  fileName: string;
+  totalRows: number;
+  created: number;
+  updated: number;
+  skipped: number;
+  duplicates: number;
+  duplicateRowsCollapsed: number;
+  rejectedRowsCount?: number;
+  rejectedRows?: RosterImportRejectedRow[];
+  duplicateAddresses?: RosterImportDuplicateAddress[];
+  importedAt?: string;
+  createdAt?: string;
+  importedBy?: { id: string; name: string; email: string } | null;
+  uploadedBy?: { id: string; name: string; email: string } | null;
+};
+
+export type RosterSettings = {
+  enforceEmail: boolean;
+  activeEntries: number;
+  updatedAt: string | null;
+  updatedBy: { id: string; name: string; email: string } | null;
+};
+
+export type UpdateRosterEntryInput = {
+  name?: string;
+  email?: string;
+  phone?: string | null;
+};
+
+export type UpdateRosterSettingsInput = {
+  enforceEmail: boolean;
+};
+

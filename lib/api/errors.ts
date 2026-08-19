@@ -40,11 +40,20 @@ export class ApiError extends Error {
     return this.status === 400 && this.issues.length > 0;
   }
 
-  /** The access token needs refreshing — see `EXPIRED_JWT_MESSAGES` for the 500. */
+  /** The access token needs refreshing — see `EXPIRED_JWT_MESSAGES` for the 500,
+   *  or P2025 404 when the user in the JWT was removed from the database. */
   get isAuthExpired(): boolean {
+    const isPrismaUserNotFound =
+      this.status === 404 &&
+      (this.message === "The requested record does not exist." ||
+        this.message === "Record not found") &&
+      (this.body as { errorDetails?: { code?: string } } | undefined)
+        ?.errorDetails?.code === "P2025";
+
     return (
       this.status === 401 ||
-      (this.status === 500 && EXPIRED_JWT_MESSAGES.has(this.message))
+      (this.status === 500 && EXPIRED_JWT_MESSAGES.has(this.message)) ||
+      isPrismaUserNotFound
     );
   }
 

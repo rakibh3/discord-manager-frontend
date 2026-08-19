@@ -37,6 +37,7 @@ type Outcome =
   | { kind: "success"; payload: SubmitAttendancePayload }
   | { kind: "already"; message: string }
   | { kind: "not-member" }
+  | { kind: "not-enrolled"; message?: string }
   | { kind: "rate-limited"; retryAfter: number | null }
   | { kind: "error"; message: string };
 
@@ -49,7 +50,11 @@ type Values = {
 
 const EMPTY: Values = { name: "", phone: "", email: "", discordUsername: "" };
 
-export function AttendanceForm() {
+export function AttendanceForm({
+  emailVerificationRequired = false,
+}: {
+  emailVerificationRequired?: boolean;
+}) {
   const [values, setValues] = useState<Values>(EMPTY);
   const [errors, setErrors] = useState<Partial<Record<keyof Values, string>>>({});
   const [outcome, setOutcome] = useState<Outcome | null>(null);
@@ -122,9 +127,30 @@ export function AttendanceForm() {
         | { message?: string; errorDetails?: { issues?: { path: string; message: string }[] } }
         | null;
 
-      // On the write path a 404 is a genuine failure, unlike on verify-user.
+      // 403 means the email is not on the enrolled student list (when verification is armed).
+      if (response.status === 403) {
+        setOutcome({
+          kind: "not-enrolled",
+          message:
+            body?.message ??
+            "এই ইমেইল ঠিকানাটি এনরোলমেন্ট রোস্টারে পাওয়া যায়নি।",
+        });
+        setErrors((current) => ({
+          ...current,
+          email:
+            "এই ইমেইল ঠিকানাটি এনরোলমেন্ট রোস্টারে পাওয়া যায়নি। কোর্সে যে ইমেইল দিয়ে ভর্তি হয়েছিলেন সেটি ব্যবহার করুন।",
+        }));
+        return;
+      }
+
+      // On the write path a 404 is a genuine failure (Discord handle not found in servers).
       if (response.status === 404) {
         setOutcome({ kind: "not-member" });
+        setErrors((current) => ({
+          ...current,
+          discordUsername:
+            "এই Discord Username-টি আমাদের কোনো সার্ভারে পাওয়া যায়নি।",
+        }));
         return;
       }
 
@@ -251,8 +277,18 @@ export function AttendanceForm() {
               <Alert variant="destructive">
                 <AlertTitle>You are not in the Discord server</AlertTitle>
                 <AlertDescription>
-                  এই Discord Username-টি আমাদের সার্ভারে নেই (অথবা আপনি সার্ভার
+                  এই Discord Username-টি আমাদের কোনো সার্ভারে নেই (অথবা আপনি সার্ভার
                   ছেড়ে গেছেন)। আগে সার্ভারে জয়েন করুন, তারপর আবার চেষ্টা করুন।
+                </AlertDescription>
+              </Alert>
+            ) : null}
+
+            {outcome?.kind === "not-enrolled" ? (
+              <Alert variant="destructive">
+                <AlertTitle>Email not enrolled</AlertTitle>
+                <AlertDescription>
+                  {outcome.message ??
+                    "এই ইমেইল ঠিকানাটি আমাদের এনরোলমেন্ট রোস্টারে নেই। কোর্সে ভর্তি হওয়ার সময় যে ইমেইল ব্যবহার করেছিলেন সেটি দিন।"}
                 </AlertDescription>
               </Alert>
             ) : null}
@@ -334,6 +370,11 @@ export function AttendanceForm() {
             <Field data-invalid={errors.email ? true : undefined}>
               <FieldLabel htmlFor={emailId}>
                 Email <span aria-hidden>*</span>
+                {emailVerificationRequired ? (
+                  <span className="text-muted-foreground ml-1.5 text-xs font-normal">
+                    (Enrolled email)
+                  </span>
+                ) : null}
               </FieldLabel>
               <Input
                 id={emailId}
@@ -352,7 +393,10 @@ export function AttendanceForm() {
                 aria-describedby={`${emailId}-hint`}
               />
               <FieldDescription id={`${emailId}-hint`}>
-                {errors.email ?? "একটি সচল ইমেইল ঠিকানা।"}
+                {errors.email ??
+                  (emailVerificationRequired
+                    ? "কোর্সে এনরোল করার সময় যে ইমেইল ব্যবহার করেছিলেন সেটি লিখুন।"
+                    : "একটি সচল ইমেইল ঠিকানা।")}
               </FieldDescription>
             </Field>
 

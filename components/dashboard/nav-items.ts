@@ -1,6 +1,7 @@
 import {
   BarChart3,
   CalendarClock,
+  GraduationCap,
   LayoutDashboard,
   Megaphone,
   MessagesSquare,
@@ -30,6 +31,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/dashboard/reminders", label: "Reminders", icon: Send },
   { href: "/dashboard/status", label: "Daily Analytics", icon: BarChart3, exact: true },
   { href: "/dashboard/members", label: "Member Status", icon: Users },
+  { href: "/dashboard/roster", label: "Roster", icon: GraduationCap },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
 
