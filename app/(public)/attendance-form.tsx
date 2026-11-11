@@ -487,17 +487,17 @@ export function AttendanceForm({
             <DiscordHandleField
               fieldId={handleId}
               value={values.discordUsername}
-              // Forward the typed email so the duplicate check is
-              // pairing-aware: the badge matches the email the student
-              // actually typed, not a stale handle-only read.
-              email={values.email}
               onChange={setHandleField}
               error={errors.discordUsername}
               onVerifiedChange={setHandleVerified}
               // The duplicate verdict is reported separately so the button
               // can be disabled with a precise "already submitted" message
               // instead of the generic "not a member" one. The green badge
-              // above the field is still the primary signal.
+              // above the field is still the primary signal. The pairing
+              // check (email bound to a different account, or vice versa)
+              // is deliberately NOT done on the live verify — it would
+              // file a report as a side effect of every keystroke. Pairing
+              // is checked on submit via the 403 handle-mismatch modal.
               onAlreadySubmittedChange={setHandleAlreadySubmitted}
             />
 
@@ -552,7 +552,7 @@ export function AttendanceForm({
     </Card>
 
     {/*
-      Mismatch modal — opens after a 403 handle-mismatch. Diagnosis is the
+      Mismatch modal — opens after a 403 from `POST /submit`. Diagnosis is the
       backend's literal message. Two recovery options:
         * "Cancel" dismisses the modal; the form clears its outcome so
           the student can fix the handle (or leave) and resubmit.
@@ -567,6 +567,11 @@ export function AttendanceForm({
       only re-fires when the handle value changes, which the student may not
       touch). If the student *does* edit the handle, the `setHandleField`
       helper already clears the verdict on every keystroke.
+
+      Pairing conflicts are *not* surfaced on the live `/verify-user`
+      badge — that endpoint files a report as a side effect of the call,
+      which would silently queue a report on every keystroke debounce. The
+      pairing check runs on submit, where the 403 reaches this modal.
     */}
     <Dialog
       open={outcome?.kind === "handle-mismatch"}

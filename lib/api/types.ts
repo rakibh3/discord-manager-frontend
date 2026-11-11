@@ -657,16 +657,49 @@ export type VerifiedMember = {
   avatarUrl: string | null;
 };
 
+/** The pairing conflict the pairing-aware check resolved to on a 202 response.
+ *  Present only when `reportQueued: true`. The "paired to" account / email is
+ *  deliberately NOT included in the response — the admin opens the report for
+ *  those details. */
+export type PairingConflict =
+  /** The email is paired to a Discord account other than the one this handle
+   *  resolves to (email-side direction). */
+  | "email_to_other_username"
+  /** The handle is paired to an email other than the one supplied (handle-side
+   *  direction). */
+  | "username_to_other_email";
+
+/** The reason the pairing-aware check filed a report. Always present when
+ *  `reportQueued: true`. */
+export type PairingReportReason = "HANDLE_MISMATCH_PAIRING";
+
 /** `GET /attendance/verify-user` answers **200 even for an unknown handle** —
- *  branch on `verified`. `member` is always `null` when `verified` is false. */
+ *  branch on `verified`. `member` is always `null` when `verified` is false.
+ *
+ *  When the optional `email` query parameter is supplied and the pairing-aware
+ *  check detects a mismatch, the endpoint files a discord-pairing-mismatch
+ *  report for an admin to review and answers **202** with `reportQueued: true`.
+ *  The form must render a "report filed" card on that branch — a green ✅
+ *  "verified" badge would be a lie. `pairingConflict` and `reportReason` are
+ *  present ONLY on the report-queued branch. */
 export type VerifyUserPayload = {
   verified: boolean;
   /** ⚠️ True only when **every** server the handle is in already has today's
-   *  row — someone in two servers who submitted in one still has work to do. */
+   *  row — someone in two servers who submitted in one still has work to do.
+   *  Forced to `false` when `reportQueued: true`. */
   alreadySubmitted: boolean;
   attendanceDate: string;
   member: VerifiedMember | null;
   servers?: (ServerRef & { alreadySubmitted: boolean })[];
+  /** Present only when the pairing-aware check filed a report. The form
+   *  branches on this to render the "report filed" card. */
+  reportQueued?: boolean;
+  /** Which direction the pairing mismatch points. Present only when
+   *  `reportQueued: true`. */
+  pairingConflict?: PairingConflict;
+  /** Why the report was filed. Always `"HANDLE_MISMATCH_PAIRING"` today;
+   *  kept as a string for forward compatibility. */
+  reportReason?: PairingReportReason;
 };
 
 /** `GET /attendance/verify-email` answers **200 even for an unrecognised

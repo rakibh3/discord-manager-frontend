@@ -32,6 +32,12 @@
       "description": "Email address of an enrolled student. Used by verify-email and submit when roster enforcement is armed. Leave empty to run verify-email against an unknown address."
     },
     {
+      "key": "pairingThiefEmail",
+      "value": "",
+      "type": "string",
+      "description": "A SECOND enrolled email address. Used by 'Submit Attendance - Handle Bound to Different Email (202)' to demonstrate that submitting a handle already paired to {{attendanceEmail}} under a different enrolled address triggers an auto-filed pairing mismatch report."
+    },
+    {
       "key": "reminderDate",
       "value": "",
       "type": "string",
@@ -1187,6 +1193,14 @@
                   "",
                   "// `verified` and `alreadySubmitted` live INSIDE `data`, not at the top",
                   "// level as the PID sketches them - sendResponse owns the envelope.",
+                  "// reportQueued is always present. pairingConflict / reportReason are",
+                  "// ABSENT when there is no conflict (omitted from the JSON, not null).",
+                  "pm.test('Pairing-aware fields absent without email', function () {",
+                  "    pm.expect(jsonData.data.reportQueued).to.be.false;",
+                  "    pm.expect(jsonData.data).to.not.have.property('pairingConflict');",
+                  "    pm.expect(jsonData.data).to.not.have.property('reportReason');",
+                  "});",
+                  "",
                   "pm.test('Rate limit headers present', function () {",
                   "    pm.expect(pm.response.headers.has('RateLimit-Limit')).to.be.true;",
                   "});"
@@ -1197,7 +1211,7 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/attendance/verify-user?username={{attendanceUsername}}",
-            "description": "Live membership check backing the form's verified badge. The handle is normalized first (trimmed, leading @ stripped, lowercased), so ` @Rakib_Dev ` and `rakib_dev` resolve identically.\n\nReturns 200 with `data.verified` true/false - not 404 - because 'not found' is the routine answer the form has to render either way. `data.alreadySubmitted` reports whether this member already has an attendance row for today's Asia/Dhaka date, which `data.attendanceDate` names.\n\nAccepts an optional `email` query parameter. When supplied AND roster enforcement is on AND the email resolves to a paired roster entry, the `alreadySubmitted` answer is pairing-aware: only attendance rows whose member belongs to the paired account count as a duplicate for this email+handle combination. Without the email (or with the gate off), the prior handle-only behaviour applies. Pass the email from the form so the 'already submitted' badge matches the email the student actually typed."
+            "description": "Live membership check backing the form's verified badge. The handle is normalized first (trimmed, leading @ stripped, lowercased), so ` @Rakib_Dev ` and `rakib_dev` resolve identically.\n\nReturns 200 with `data.verified` true/false - not 404 - because 'not found' is the routine answer the form has to render either way. `data.alreadySubmitted` reports whether this member already has an attendance row for today's Asia/Dhaka date, which `data.attendanceDate` names.\n\nAccepts an optional `email` query parameter. When supplied the answer is pairing-aware in three ways: bound together + today's row recorded -> alreadySubmitted: true; one side recorded, other clean -> alreadySubmitted: false (can submit); bound to a different account or address -> reportQueued: true, status 202 (mismatch report filed for an admin). Pass the email from the form so the badge and the conflict check both match the email the student actually typed."
           }
         },
         {
@@ -1226,6 +1240,9 @@
                   "    pm.response.to.have.status(200);",
                   "    pm.expect(jsonData.data.verified).to.be.false;",
                   "    pm.expect(jsonData.data.member).to.be.null;",
+                  "    pm.expect(jsonData.data.reportQueued).to.be.false;",
+                  "    pm.expect(jsonData.data).to.not.have.property('pairingConflict');",
+                  "    pm.expect(jsonData.data).to.not.have.property('reportReason');",
                   "});"
                 ]
               }
@@ -1299,13 +1316,17 @@
                   "});",
                   "",
                   "// The endpoint always answers the verification question in the same envelope shape",
-                  "// (verified / alreadySubmitted / member / servers). With the optional email supplied, the",
-                  "// alreadySubmitted field is restricted to the email+handle combination the form is rendering.",
+                  "// (verified / alreadySubmitted / member / servers / pairingConflict / reportQueued / reportReason).",
+                  "// With the optional email supplied, the answer is pairing-aware in three ways:",
+                  "//   * bound together + today's row recorded  -> alreadySubmitted: true (success card)",
+                  "//   * one side recorded, other clean          -> alreadySubmitted: false (submit button)",
+                  "//   * bound to a different account / address  -> reportQueued: true, status 202 (report card)",
                   "pm.test('Response carries the verify-user payload', function () {",
                   "    pm.expect(jsonData.data).to.have.property('verified');",
                   "    pm.expect(jsonData.data).to.have.property('alreadySubmitted');",
                   "    pm.expect(jsonData.data).to.have.property('attendanceDate');",
                   "    pm.expect(jsonData.data).to.have.property('servers');",
+                  "    pm.expect(jsonData.data).to.have.property('reportQueued');",
                   "});",
                   "",
                   "// A malformed email is a 400 (Zod), not a 200-with-false. The form must distinguish",
@@ -1313,6 +1334,25 @@
                   "pm.test('Malformed email is NOT skipped', function () {",
                   "    if (pm.request.url.query.get('email') === 'not-an-email') {",
                   "        pm.response.to.have.status(400);",
+                  "    }",
+                  "});",
+                  "",
+                  "// A pairing conflict MUST surface as 202 with reportQueued: true. The form",
+                  "// branches on these to show the report card, not the success card.",
+                  "// pairingConflict is a string (the conflict kind), not an object —",
+                  "// ABSENT when there is no conflict, PRESENT when there is.",
+                  "pm.test('Pairing conflict (if any) is reported with the right status', function () {",
+                  "    if (jsonData.data.reportQueued === true) {",
+                  "        pm.expect(jsonData.data.alreadySubmitted).to.be.false;",
+                  "        pm.expect(jsonData.data).to.have.property('pairingConflict');",
+                  "        pm.expect(['email_to_other_username', 'username_to_other_email'])",
+                  "            .to.include(jsonData.data.pairingConflict);",
+                  "        pm.expect(jsonData.data.reportReason).to.equal('HANDLE_MISMATCH_PAIRING');",
+                  "        pm.response.to.have.status(202);",
+                  "    } else {",
+                  "        // Not-conflict path: pairingConflict / reportReason are absent.",
+                  "        pm.expect(jsonData.data).to.not.have.property('pairingConflict');",
+                  "        pm.expect(jsonData.data).to.not.have.property('reportReason');",
                   "    }",
                   "});"
                 ]
@@ -1322,7 +1362,7 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/attendance/verify-user?username={{attendanceUsername}}&email={{attendanceEmail}}",
-            "description": "Pairing-aware duplicate check. When the optional `email` query parameter is supplied AND roster enforcement is on AND the email resolves to a paired roster entry, only attendance rows whose member belongs to the paired account count as a duplicate for this email+handle combination.\n\nWithout the email: the prior handle-only behaviour applies - any prior row for any resolved member counts as a duplicate.\n\nWith the email but enforcement off: the prior handle-only behaviour applies - the roster has no concept of pairings to consult.\n\nWith the email but the entry is unpaired: `alreadySubmitted` is false regardless of any prior rows. Without a recorded link, no prior row is attributable to this email.\n\nWith the email and the entry paired to a different account: `alreadySubmitted` is false for the submitted handle. The pairing-mismatch flow on the submit path remains the gate for the legitimate 'cannot enter my real Discord username' case.\n\nReplace `{{attendanceEmail}}` with `not-an-email` to verify the 400 path without disturbing the rest of the request."
+            "description": "Pairing-aware duplicate check. When the optional `email` query parameter is supplied the response resolves to one of three outcomes.\n\n1. Email + username bound to the same person AND today's row is recorded: `200` + `verified: true, alreadySubmitted: true` - form shows the success card; nothing more to do.\n\n2. One side recorded today, the other not, binding clean: `200` + `verified: true, alreadySubmitted: false` - form shows the submit button (normal path).\n\n3. Email paired to a different account OR username paired to a different email: `202` + `verified: true, alreadySubmitted: false, reportQueued: true, pairingConflict: { kind: 'email_to_other_username' | 'username_to_other_email' }, reportReason: 'HANDLE_MISMATCH_PAIRING'` - a discord-pairing-mismatch report is filed for an admin to review. The form renders the report card; today's attendance is NOT recorded.\n\nReplace `{{attendanceEmail}}` with `not-an-email` to verify the 400 path without disturbing the rest of the request."
           }
         },
         {
@@ -1663,6 +1703,64 @@
               }
             },
             "description": "Golden Rule 3: a handle absent from the guild can never submit. 404 here rather than the verify endpoint's 200, because this is a genuine failure to act rather than a question being answered.\n\nA departed member gets this identical response."
+          }
+        },
+        {
+          "name": "Submit Attendance - Handle Bound to Different Email (202)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// These endpoints are public: students have no account to log in with.",
+                  "// The collection-level pre-request adds an Authorization header to every",
+                  "// request, so remove it here to prove these work with no credentials.",
+                  "pm.request.headers.remove('Authorization');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const jsonData = pm.response.json();",
+                  "",
+                  "// The symmetric case to the flag-driven branch: the SUBMITTED HANDLE",
+                  "// is already roster-paired to a DIFFERENT email than the one supplied.",
+                  "// No flag is required; the report is auto-filed. Today's attendance",
+                  "// is NOT recorded.",
+                  "pm.test('Auto-filed pairing mismatch report', function () {",
+                  "    pm.response.to.have.status(202);",
+                  "    pm.expect(jsonData.success).to.be.true;",
+                  "    pm.expect(jsonData.data.attendanceRecorded).to.be.false;",
+                  "    pm.expect(jsonData.data.reportQueued).to.be.true;",
+                  "    pm.expect(jsonData.message).to.include('Discord pairing mismatch report filed');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/attendance/submit",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{pairingThiefEmail}}\",\n  \"discordUsername\": \"{{attendanceUsername}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Symmetric to the flag-driven 202 — but the student does NOT have to tick any box. The submit path runs the pre-attendance pairing check in BOTH directions, and fires an open discord-pairing-mismatch report whenever the submitted handle is already roster-paired to a DIFFERENT email.\n\nSetup (run these first):\n\n1. 'Submit Attendance' (above) — pairs `{{attendanceUsername}}` to `{{attendanceEmail}}`.\n2. Import a roster that ALSO enrolls `{{pairingThiefEmail}}` (any second active entry).\n\nThen this request: same handle, the second email. Result: 202 Accepted with `attendanceRecorded: false` and `reportQueued: true`. No attendance row is written. A `discord_pairing_mismatch_reports` row exists against the FIRST entry (the one that already held the handle), not the second — the admin opens that report to disambiguate the binding.\n\nThis is the case the post-attendance `recordRosterPairing` write used to leak silently: the new email's entry was unbound, so the first-write claim updated it, only to be swallowed by the `@unique` on `discord_user_id` (entry A already held the handle). The student saw a 201 success card and no report was filed. The pre-attendance check here catches that case BEFORE any attendance row is written, so a direct `POST /submit` cannot bypass it."
           }
         }
       ]

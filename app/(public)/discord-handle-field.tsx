@@ -55,15 +55,19 @@ function pendingServers(payload: VerifyUserPayload) {
  *  gating submit button can disable itself when the handle is still being
  *  checked, is unknown, or has not been entered yet.
  *
- *  When `email` is supplied, it is forwarded to `/verify-user` so the
- *  duplicate check is **pairing-aware** — only attendance rows whose member
- *  belongs to the paired account count as a duplicate for this email+handle
- *  combination. The form passes its typed email so the "already submitted"
- *  badge matches the email the student actually typed. Without it, the prior
- *  handle-only behaviour applies (any prior row counts as a duplicate). */
+ *  **No email is forwarded to `/verify-user` from this field.** Pairing
+ *  conflicts (a Discord username already paired to a *different* email, or
+ *  vice versa) are only checked at submit time, where the 403 handle-mismatch
+ *  branch opens a consent modal. Forwarding the email on every keystroke
+ *  would fire the pairing-mismatch report as a side effect of every verify
+ *  call, which is exactly the silent-report bug the form was meant to fix.
+ *  The duplicate check on the live badge is therefore handle-only —
+ *  `alreadySubmitted: true` for any handle that already submitted today,
+ *  even one belonging to a different student. The pairing check on submit
+ *  narrows the same scenario down to "is this submission mine?" and refuses
+ *  it via 403 if not. */
 export function DiscordHandleField({
   value,
-  email,
   onChange,
   error,
   fieldId,
@@ -71,10 +75,6 @@ export function DiscordHandleField({
   onAlreadySubmittedChange,
 }: {
   value: string;
-  /** Optional — when present, the duplicate check is pairing-aware. Forwarded
-   *  to `/attendance/verify-user?email=…` so the badge tracks the email the
-   *  student actually typed, not a stale prior read. */
-  email?: string;
   onChange: (value: string) => void;
   error?: string;
   fieldId: string;
@@ -83,7 +83,8 @@ export function DiscordHandleField({
    *  "not a member", "still checking", and "already submitted" — the
    *  already-submitted case is also surfaced via `onAlreadySubmittedChange` so
    *  the form can disable the button with a precise message instead of a
-   *  generic one. */
+   *  generic one. Pairing conflicts are NOT surfaced here — submit handles
+   *  them via the 403 handle-mismatch modal. */
   onVerifiedChange?: (verified: boolean) => void;
   /** Reports whether the handle is the *already submitted for today* kind
    *  specifically. The form uses this to disable the submit button — a second
@@ -102,9 +103,6 @@ export function DiscordHandleField({
   } | null>(null);
 
   const handle = normalizeDiscordUsername(value);
-  // Trimmed + lowercased — the same normalization the form does before submit,
-  // and what `/verify-user` and the roster gate operate on.
-  const normalizedEmail = email?.trim().toLowerCase() ?? "";
 
   // The rule must stay exactly as loose as Discord's, or real students are
   // locked out. Catching it here also spares the per-IP rate-limit budget.
@@ -141,16 +139,14 @@ export function DiscordHandleField({
       // out-of-order response for an older handle is simply never displayed.
       const settle = (next: HandleBadge) => setRemote({ handle, badge: next });
 
-      // Build the query string by hand — the verification endpoint accepts
-      // an optional `email` for pairing-aware duplicate checks. Forwarding
-      // the typed email means the badge reflects this email+handle pair, not
-      // a stale handle-only read.
-      const params = new URLSearchParams({ username: handle });
-      if (normalizedEmail) params.set("email", normalizedEmail);
-
+      // Handle-only lookup — no email is forwarded here. Forwarding the
+      // typed email would make every keystroke fire the pairing-mismatch
+      // report as a side effect, which is the bug the form is meant to
+      // avoid. Pairing is checked once on submit, via the 403
+      // handle-mismatch modal.
       try {
         const response = await fetch(
-          `${API_BASE}/attendance/verify-user?${params.toString()}`,
+          `${API_BASE}/attendance/verify-user?username=${encodeURIComponent(handle)}`,
           { signal: controller.signal, cache: "no-store" },
         );
 
@@ -163,11 +159,10 @@ export function DiscordHandleField({
           return;
         }
 
-        // 400 is Zod rejecting the handle's shape — distinct from a handle that
-        // is simply not in the server. A malformed email (when supplied) also
-        // lands here, and is intentionally folded into the same malformed
-        // verdict: the form must distinguish "fix your typing" from "no such
-        // handle" but the field-level fix is the same.
+        // 400 is Zod rejecting the handle's shape — distinct from a handle
+        // that is simply not in the server. The form must distinguish "fix
+        // your typing" from "no such handle" but the field-level fix is the
+        // same.
         if (response.status === 400) {
           settle({ kind: "malformed" });
           return;
@@ -202,7 +197,7 @@ export function DiscordHandleField({
     // (or the email being revised by the parent) re-fires the lookup with
     // the new pairing. Without the email in the key, the badge would lag
     // a corrected email by one debounce.
-  }, [handle, normalizedEmail, malformed]);
+  }, [handle, malformed]);
 
   // Report the verdict to the parent so it can gate submit. This effect runs
   // synchronously (no debounce) — the parent already has the value, and a
@@ -373,11 +368,11 @@ export function DiscordHandleField({
       {/*
         The "where to find your username" help is only useful *before* the
         handle is verified — once the badge says ✅, the student has already
-        entered a valid handle. Pairing mismatch is handled by the modal in
-        the parent form on submit.
+        entered a valid handle. Pairing mismatches are detected only on
+        submit (via the 403 modal); the live badge does not carry that
+        signal.
       */}
-      {badge.kind === "verified" ||
-      badge.kind === "duplicate" ? null : (
+      {badge.kind === "verified" || badge.kind === "duplicate" ? null : (
         <details id={guidanceId} className="text-muted-foreground/90 group">
           <summary className="hover:text-foreground cursor-pointer list-none">
             Where to find your username
