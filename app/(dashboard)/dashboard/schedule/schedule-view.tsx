@@ -1,7 +1,6 @@
 "use client";
 
 import { AlertTriangle, CircleSlash, Info } from "lucide-react";
-import Link from "next/link";
 import { useState } from "react";
 
 import { ManualOverride } from "./manual-override";
@@ -89,11 +88,7 @@ export function ScheduleView({ initial }: { initial: ChannelSchedulePayload }) {
               </Badge>
             </CardTitle>
             <CardDescription>
-              Read live from Discord on every page load, so this reflects manual
-              permission edits made in Discord as well as anything done here.
-              {servers.length > 1
-                ? " One schedule drives every server, but each channel is toggled separately."
-                : null}
+              Live from Discord.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
@@ -142,14 +137,13 @@ export function ScheduleView({ initial }: { initial: ChannelSchedulePayload }) {
                     : `${servers.length} servers`}
                 </dd>
               </div>
-              <div className="flex flex-col gap-0.5">
-                <dt className="text-muted-foreground text-xs">
-                  Scheduler process
-                </dt>
-                <dd className="text-sm font-medium">
-                  {scheduler.running ? "Running" : "Not running"}
-                </dd>
-              </div>
+              {/* Only worth a line when it is wrong. */}
+              {!scheduler.running ? (
+                <div className="flex flex-col gap-0.5">
+                  <dt className="text-muted-foreground text-xs">Scheduler</dt>
+                  <dd className="text-sm font-medium">Not running</dd>
+                </div>
+              ) : null}
             </dl>
 
             <ManualOverride payload={payload} onRefreshed={setPayload} />
@@ -160,8 +154,7 @@ export function ScheduleView({ initial }: { initial: ChannelSchedulePayload }) {
           <CardHeader>
             <CardTitle>Last run</CardTitle>
             <CardDescription>
-              The first place a permission problem becomes visible. If the
-              channel stops opening, this is what to read.
+              Check here first if the channel stops opening.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
@@ -218,22 +211,12 @@ export function ScheduleView({ initial }: { initial: ChannelSchedulePayload }) {
         <CardHeader>
           <CardTitle>Stored schedule</CardTitle>
           <CardDescription>
-            Currently {schedule.enabled ? "enabled" : "disabled"}, opening at{" "}
-            {formatWallClock(schedule.openTime)} and locking at{" "}
-            {formatWallClock(schedule.closeTime)} on{" "}
-            {formatWeekdays(schedule.daysOfWeek)} ({schedule.timezone}). Last
-            changed {formatDhaka(schedule.updatedAt)}
-            {schedule.updatedBy
-              ? ` by ${schedule.updatedBy.name}`
-              : " (the admin who changed it has since been deleted)"}
-            . The open time is owned by the{" "}
-            <Link
-              href="/dashboard/announcement"
-              className="underline underline-offset-4"
-            >
-              attendance announcement
-            </Link>{" "}
-            - the channel opens the moment that message goes out.
+            {schedule.enabled
+              ? `${formatWallClock(schedule.openTime)}–${formatWallClock(schedule.closeTime)} · ${formatWeekdays(schedule.daysOfWeek)}`
+              : "Paused"}
+            {" · last changed "}
+            {formatDhaka(schedule.updatedAt)}
+            {schedule.updatedBy ? ` by ${schedule.updatedBy.name}` : null}
           </CardDescription>
         </CardHeader>
         <CardContent>

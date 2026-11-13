@@ -23,6 +23,7 @@ Everything below was read out of the source (`src/modules/**`, `src/middlewares/
    - [8.4 Schedule — `/api/schedule`](#84-schedule--apischedule)
    - [8.5 Reminders — `/api/reminders`](#85-reminders--apireminders)
    - [8.6 Attendance (public) — `/api/attendance`](#86-attendance-public--apiattendance)
+   - [8.5A Reminder emails — `/api/reminders/emails` and the Mailtrap webhook](#85a-reminder-emails--apiremindersemails-and-the-mailtrap-webhook)
    - [8.6A Roster — `/api/roster`](#86a-roster--apiroster)
    - [8.6B Registration — `/api/registration` (public) and `/api/registrations` (admin)](#86b-registration--apiregistration-public-and-apiregistrations-admin)
    - [8.7 Attendance announcement — `/api/announcement`](#87-attendance-announcement--apiannouncement)
@@ -1992,6 +1993,7 @@ The target definition is the exact same query `POST /send` uses, so the preview 
 | `minMissedDays` | number   | optional, default `1`, integer ≥ 1                                                     |
 | `message`       | string   | trimmed, 1–**1970** characters                                                         |
 | `guildIds`      | string[] | optional, restrict to listed configured servers. Unknown ID is a 400 naming it.         |
+| `channels`      | enum[]   | optional, `DISCORD` and/or `EMAIL`, at least one; default `["DISCORD"]` (the old broadcast byte-for-byte). `EMAIL` while reminder mail is unconfigured is a **503** naming the missing variable; email-only with nobody registered is a **400**. |
 
 The 1970 cap = Discord's 2000-character limit minus the fixed heading `⚠️ **Daily Update Reminder**` the DM is wrapped in. Enforce it in the textarea with a live counter so the admin never discovers it at submit time.
 
@@ -2236,6 +2238,70 @@ Queue and worker health. No parameters.
 - **`lastFallback.missingPermission: true` is a silent failure.** Every DM delivered fine and the channel announcement reached nobody — precisely the members who most needed it. Surface it as an error banner: the bot needs `Send Messages` on `#daily-update-reminder`.
 
 ---
+
+### 8.5A Reminder emails — `/api/reminders/emails` and the Mailtrap webhook
+
+A broadcast sent with `channels` containing `EMAIL` writes one **email row per person** (account). The address is the email of the roster entry LINKED to that Discord account; a person with no linked entry never registered and gets a `NO_ADDRESS` row instead of an email. Emails go out on their own queue (`REMINDER_EMAIL_PER_SECOND`, default 5/s) from `REMINDER_MAIL_FROM_EMAIL` on `reminders.back2rise.site`.
+
+**Changes to existing reminder reads:**
+
+- `GET /reminders/targets` adds `email: { reachable, notRegistered }` (counted per person) and `hasEmail` on each target — reported whatever channels are chosen.
+- `POST /reminders/send` (202) adds `channels`, `emailQueued` (email jobs) and `emailNoAddress`. `queuedJobs` is the DM job count and is `0` for an email-only send.
+- `GET /reminders/:id` adds `channels` and `email` — `null` for a Discord-only broadcast, otherwise the counts below plus `openRate` (opened ÷ delivered, `null` until something is delivered). `delivered`/`dmClosed`/`failed`/`outstanding` stay **DM-only**.
+- `GET /reminders` rows add `channels` (absent on rows written before email existed = Discord only).
+- `GET /reminders/status` adds `email: { workerRunning, workerEnabled, emailsPerSecond, queueDepth, mail: { configured, sandbox, reason, fromEmail } }` and `tracking: { webhookConfigured, lastEventAt, sentEmails, lastRequestAt, eventsApplied, signatureRejections, lastRejectionAt }`. ⚠️ `sentEmails > 0` with `lastEventAt: null` means the webhook is not reaching the backend — every email will read "not opened" until it does.
+
+**Email states** — derived from timestamps at read time, never stored, because Mailtrap events arrive out of order:
+
+| State        | Meaning                                                                                       |
+| ------------ | --------------------------------------------------------------------------------------------- |
+| `pending`    | queued, not sent yet                                                                          |
+| `awaiting`   | Mailtrap accepted it (`status: SENT`); no delivery report yet                                 |
+| `delivered`  | **filter only** — a delivery OR an open was recorded. Superset of `opened` + `not_opened`      |
+| `opened`     | an open was recorded (tracking pixel: an estimate — Apple Mail opens on its own)              |
+| `not_opened` | delivered, no open recorded, not bounced. **Not** proof it was unread                         |
+| `bounced`    | `bounce`, `reject` or `suspension` reported                                                   |
+| `failed`     | Mailtrap refused the send (4xx) or retries were exhausted; `errorMessage` says why            |
+| `no_address` | never registered — no email sent                                                              |
+
+#### 🔐 `GET /api/reminders/emails`
+
+Every reminder email, newest send first. Query (all optional): `reminderId` (uuid), `state` (comma-separated, OR-ed — e.g. `opened,not_opened`; omit for all, `state=` is a 400), `from` / `to` (`YYYY-MM-DD`, the Dhaka day the email was **sent**, inclusive, ≤ 92 days apart), `search` (name, email or current Discord username, ≤ 100 chars), `page`, `limit` (≤ 200).
+
+**200** — `data.counts` is per state under every filter **except** `state`, so filter chips keep their numbers while one is selected.
+
+```jsonc
+{
+  "meta": { "page": 1, "limit": 50, "total": 2 },
+  "data": {
+    "counts": { "total": 2, "pending": 0, "awaiting": 0, "delivered": 2, "opened": 1, "not_opened": 1, "bounced": 0, "failed": 0, "no_address": 0 },
+    "rows": [
+      {
+        "id": "…", "reminderId": "…",
+        "reminderStartDate": "2026-11-12", "reminderEndDate": "2026-11-12",
+        "sentBy": "Admin",                 // null if the admin account was removed
+        "discordUserId": "…", "discordUsername": "student_a", // current handle, null if gone
+        "name": "Student A", "email": "a@example.com",       // copies taken at send time
+        "state": "opened", "status": "SENT", "errorMessage": null,
+        "sentAt": "…", "deliveredAt": "…", "firstOpenedAt": "…", "lastOpenedAt": "…", "openCount": 2,
+        "bouncedAt": null, "bounceReason": null, "spamReportedAt": null
+      }
+    ]
+  }
+}
+```
+
+#### 🔐 `GET /api/reminders/emails/:recipientId/events`
+
+The tracking events for one row, oldest first: `[{ id, type, occurredAt, detail }]`, `type` ∈ `DELIVERY OPEN CLICK SOFT_BOUNCE BOUNCE REJECT SUSPENSION SPAM UNSUBSCRIBE`. 404 for an unknown id.
+
+#### 🔐 `GET /api/reminders/emails/export`
+
+The same filters as the list (no paging), as an **.xlsx** download (`reminder-emails-YYYY-MM-DD.xlsx`, sheet "Email log", frozen header, auto-filter). Columns: Name, Email, Discord username, Status, Reminder period, Sent by, Sent at / Delivered at / First opened / Last opened (Asia/Dhaka), Opens, Bounced at, Bounce reason, Error. Stream it through a route handler — the token must stay on the server.
+
+#### 🔓 `POST /api/webhooks/mailtrap` (Mailtrap only)
+
+Not for the frontend. Mailtrap's sending webhook for `reminders.back2rise.site`; body `{ "events": [ … ] }`. Authenticated by **HMAC-SHA256 of the raw body** in `Mailtrap-Signature` with `MAILTRAP_WEBHOOK_SIGNING_SECRET`: secret unset → 503, missing/wrong signature → 401. Duplicate `event_id`s are ignored; events from other categories (welcome emails) and unknown messages answer 200 and are skipped. Test locally with `bunx tsx send-test-webhook.ts <recipientId> open`.
 
 ### 8.6 Attendance (public) — `/api/attendance`
 
@@ -2515,7 +2581,7 @@ Answers **200 always**. Branch on `data.verified`, never on the HTTP status.
 ```
 
 - `verified: true` means the handle is an active member **and** no pairing disagreement exists in either direction — the same predicate the submit path enforces, so a `verified: true` here means the button's state matches what `POST /submit` will decide one click later.
-- An email that is on the roster but **unpaired**, and a handle that is unpaired too, is a clean pair — the first-write rule applies and the submit itself links the entry. Gating the button on a REQUIRED existing pairing would lock out every student whose roster entry was imported without a Discord pairing and who has not submitted once yet.
+- An email that is on the roster but **unpaired**, and a handle that is unpaired too, is a clean pair, and the submit goes through. The submit no longer writes the link: a registered student is linked when they JOIN Discord with the handle they registered. Gating the button on a REQUIRED existing pairing would lock out every registered student whose join has not been seen yet.
 - `conflict: true` says a pairing disagreement was detected WITHOUT naming the paired side. The paired account and email belong to another student, and this route is reachable without a token — the same disclosure rule `verify-user` follows.
 - An unknown handle answers `verified: false, conflict: false, handleIsMember: false` — the form's handle badge already says "not found"; this endpoint adds nothing to that message.
 - **Read-only by contract.** It writes nothing and files nothing, so it is safe to call on a typing debounce. A mismatch has exactly one consequence: the form keeps the submit button disabled and tells the student the email and Discord username do not match.
@@ -2533,96 +2599,15 @@ All routes 🔐 **ADMIN**, without exception. This is the enrolment list — nam
 
 | #   | Call                                                | What to check                                                      |
 | --- | --------------------------------------------------- | ------------------------------------------------------------------ |
-| 1   | `POST /roster/import`                               | `data.skipped` is 0, or the listed rows are ones you meant to skip |
+| 1   | (registrations)                                     | students have registered and are on the roster                     |
 | 2   | `GET /roster/settings`                              | `activeEntries` matches the size of your cohort                    |
 | 3   | `PATCH /roster/settings` `{ "enforceEmail": true }` | takes effect on the next submission, no restart                    |
 
 **Rollback is `PATCH /roster/settings { "enforceEmail": false }`** — one request, immediate, no deploy. Disabling always succeeds whatever the roster holds.
 
-#### 🔐 `POST /roster/import`
+#### ~~`POST /roster/import`~~ and ~~`GET /roster/imports`~~ — removed
 
-`multipart/form-data`, one file in the **`file`** field. Accepts `.xlsx` and `.csv`.
-
-Columns are located by **header name, never by position**, matched case-insensitively after trimming:
-
-| Field            | Accepted headings                                                               |
-| ---------------- | ------------------------------------------------------------------------------- |
-| email (required) | `email`, `email address`, `e-mail`, `e mail`, `mail`                            |
-| name (required)  | `name`, `full name`, `student name`, `fullname`                                 |
-| phone (optional) | `phone`, `phone number`, `mobile`, `mobile number`, `contact`, `contact number` |
-
-Unrecognized columns (batch, roll number, section) are ignored. Blank rows are skipped silently.
-
-```jsonc
-{
-  "success": true,
-  "statusCode": 200,
-  "message": "Imported 487 of 500 row(s); 13 skipped",
-  "data": {
-    "importId": "…",
-    "fileName": "batch-11.xlsx",
-    "totalRows": 500,
-    "created": 412,
-    "updated": 75,
-    "skipped": 13,
-    "duplicates": 2,
-    "duplicateRowsCollapsed": 2,
-    "rejectedRows": [
-      { "rowNumber": 44, "reason": "Invalid email address: rakib@@x.com" },
-    ],
-    "duplicateAddresses": [
-      { "email": "rakib@example.com", "rowNumbers": [12, 40] },
-    ],
-    "batchFailures": [],
-  },
-}
-```
-
-- **Partial success is a 200, not an error.** The valid rows really did load; an error status would say nothing happened and invite a re-upload. `created + updated + skipped + duplicateRowsCollapsed` always equals `totalRows` — the last term counts rows absorbed by an earlier row with the same address, which are neither written separately nor rejected.
-- **`rejectedRows` carries the sheet's own row numbers** so the admin can fix those lines and re-upload.
-- **An import upserts by email and can never remove anybody.** Entries absent from the sheet are left untouched and stay active, so a truncated or wrong-sheet upload adds noise rather than locking students out. Re-importing a deactivated person reinstates them, which makes re-upload idempotent and safe to retry.
-- **`duplicateAddresses`** reports an address repeated inside one sheet. The **last** row wins; the repetition is surfaced because it is usually a mistake in the source spreadsheet.
-
-| Status | Cause                                     | Notes                                                                                                                |
-| ------ | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| 400    | no file, or wrong field name              | field must be `file`                                                                                                 |
-| 400    | header row has no email or no name column | message names the headers found and the accepted headings. **Nothing is written** — every row would fail identically |
-| 400    | legacy binary `.xls`                      | message says to re-save as `.xlsx`; the parser cannot read that format                                               |
-| 400    | file over the size limit (default 5 MB)   | enforced while the upload streams, so it is never parsed                                                             |
-| 400    | more rows than the limit (default 20 000) | a blast-radius control; nothing is written                                                                           |
-
-#### 🔐 `GET /roster?search=&status=&page=&limit=`
-
-`status` is `active` (default), `inactive`, or `all`. `search` matches name or email, case-insensitive and partial. `limit` maxes at 200. `meta.total` counts everything matching the same filter.
-
-Each row carries the pairing: `discordUserId` (the paired Discord account, or `null`), `linkedAt`, and `discordUsername` — the paired account's **current** username, resolved from the member directory at read time. `discordUsername` is `null` when the entry is unpaired **and** when the paired account is no longer in the server; `discordUserId` tells the two apart. `PATCH`, `DELETE` and `restore` return the same shape.
-
-#### 🔐 `PATCH /roster/:id`
-
-Correct one entry: `name`, `email`, `phone` (send `null` to clear the phone), and `discordUsername`. At least one field required. Changing the email to one another entry holds is a **409** — never a silent merge.
-
-**`discordUsername` edits the pairing** — the Discord account the attendance form accepts together with this email. It is the repair path for a student the form refuses with "do not match our records".
-
-| Value              | Effect                                                                                                                              |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| omitted            | pairing left alone                                                                                                                  |
-| `null`             | pairing cleared; the student's next accepted submission claims a fresh one                                                          |
-| `"rakib_dev"`      | entry paired with the account that currently holds that username in the server (normalized: trim → strip leading `@` → lowercase)  |
-
-| Status  | Cause                                                             | Notes                                                                       |
-| ------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| 400     | malformed username                                                | same format rule as the public form                                         |
-| **422** | no current server member has that username                        | the roster stores the account, not the name, so it must resolve to a member |
-| **409** | the username is already paired with another roster entry          | the message names that entry; clear it there first                          |
-| **409** | the username currently resolves to more than one account          | stale directory — sync members and retry                                    |
-
-#### 🔐 `DELETE /roster/:id` and `PATCH /roster/:id/restore`
-
-`DELETE` **deactivates**; it never hard-deletes, so the removal is reversible and the audit trail survives. Only active entries count as enrolled. `restore` reinstates.
-
-#### 🔐 `GET /roster/imports?page=&limit=`
-
-Import history, most recent first: file name, the administrator, the time, and the counts. This is the audit trail for the only write path that can change who may submit attendance — check it first when the roll is not what someone expected.
+**Registration is the only way onto the roster.** The spreadsheet import and its history endpoint were removed: an imported row carries no declared Discord handle, so it could never be linked to an account. Both paths now answer the generic 404. The `roster_imports` table is kept as history and is no longer written. A student is added by `POST /registration/submit` (or the admin "add to roster" action on `/registrations`) and linked to their Discord account automatically when they join a server with the handle they registered.
 
 #### 🔐 `GET /roster/settings` and `PATCH /roster/settings`
 
@@ -2954,6 +2939,8 @@ Newest first. `status` is `all` (default) / `PENDING` / `ENROLLED`. `emailStatus
       "discordUsername": "rakib_dev",
       "status": "ENROLLED",
       "enrolledAt": "…",
+      "linked": true,          // roster entry linked to the Discord account that joined with this handle
+      "linkedAt": "…",         // null while the student has not joined a server yet
       "welcomeEmailStatus": "FAILED",
       "welcomeEmailSentAt": null,
       "welcomeEmailError": "Mailtrap 403: …", // why, when it failed
@@ -3002,7 +2989,7 @@ Both refuse **before touching any row** when the email could not possibly be del
 
 #### 🔐 `GET /registrations/export?search=&status=&emailStatus=`
 
-CSV attachment of the filtered set (no paging — it streams every match), `registrations-YYYY-MM-DD.csv`. Columns: `Name`, `Email`, `Phone`, `Discord Username`, `Status`, `Welcome Email`, `Registered At (Asia/Dhaka)`. The first three headings are ones `POST /roster/import` recognises, so the file can be uploaded to the roster as-is.
+CSV attachment of the filtered set (no paging — it streams every match), `registrations-YYYY-MM-DD.csv`. Columns: `Name`, `Email`, `Phone`, `Discord Username`, `Status`, `Welcome Email`, `Registered At (Asia/Dhaka)`. (The roster spreadsheet import these headings were chosen for has been removed.)
 
 ---
 

@@ -34,7 +34,7 @@ export default function SchedulePage() {
           #daily-update schedule
         </h1>
         <p className="text-muted-foreground text-sm">
-          When roughly 5,000 students may post. All times are Asia/Dhaka.
+          When students can post. Times are Asia/Dhaka.
         </p>
       </div>
 

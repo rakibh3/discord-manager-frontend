@@ -90,7 +90,7 @@ async function DailyCompletion() {
         <CardHeader>
           <CardTitle>Today&rsquo;s completion</CardTitle>
           <CardDescription>
-            {formatCivilDate(today)} (Asia/Dhaka)
+            {formatCivilDate(today)}
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
@@ -119,7 +119,7 @@ async function DailyCompletion() {
       <CardHeader>
         <CardTitle>Today&rsquo;s completion</CardTitle>
         <CardDescription>
-          {formatCivilDate(today)} (Asia/Dhaka) &middot; {pct}% both complete
+          {formatCivilDate(today)} &middot; {pct}% both complete
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -200,7 +200,7 @@ export default function OverviewPage() {
       <div className="flex flex-col gap-1">
         <h1 className="text-xl font-semibold tracking-tight">Overview</h1>
         <p className="text-muted-foreground text-sm">
-          Live system health and operational metrics.
+          Today at a glance.
         </p>
       </div>
 

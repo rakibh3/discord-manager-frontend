@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { Suspense } from "react";
 
+import { EnrolledView } from "./_enrolled/enrolled-view";
 import { MemberTable } from "@/app/(dashboard)/dashboard/status/member-table";
 import { StatusFilters } from "@/app/(dashboard)/dashboard/status/status-filters";
 import {
@@ -16,7 +18,8 @@ import type {
   RangeStatus,
 } from "@/lib/api/types";
 import { DAILY_STATUS_ENABLED } from "@/lib/flags";
-import { parsePeriod } from "@/lib/period";
+import { cn } from "@/lib/utils";
+import { parsePeriod, periodSearchParams, type Period } from "@/lib/period";
 
 export const metadata: Metadata = { title: "Member status" };
 
@@ -25,6 +28,56 @@ const RANGE_SORTS: DailyStatusSortBy[] = [
   "completeDays",
   "rangeStatus",
 ];
+
+type View = "members" | "enrolled";
+
+/** The two populations, one page. Switching keeps only the period: every other
+ *  filter (`status`, `search`, `sortBy`, `page`) means something different in
+ *  each view, so carrying it across would apply a filter that does not fit. */
+function ViewSwitch({ view, period }: { view: View; period: Period }) {
+  const href = (target: View) => {
+    const params = new URLSearchParams(periodSearchParams(period));
+    if (target === "enrolled") params.set("view", "enrolled");
+    return `/dashboard/members?${params.toString()}`;
+  };
+
+  const tabs: { value: View; label: string; hint: string }[] = [
+    {
+      value: "members",
+      label: "Discord members",
+      hint: "Everyone in a configured server",
+    },
+    {
+      value: "enrolled",
+      label: "Enrolled students",
+      hint: "Everyone who registered, with name, email and phone",
+    },
+  ];
+
+  return (
+    <nav
+      aria-label="Which population to show"
+      className="bg-muted inline-flex w-fit rounded-lg p-1"
+    >
+      {tabs.map((tab) => (
+        <Link
+          key={tab.value}
+          href={href(tab.value)}
+          title={tab.hint}
+          aria-current={view === tab.value ? "page" : undefined}
+          className={cn(
+            "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+            view === tab.value
+              ? "bg-background text-foreground shadow-sm"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {tab.label}
+        </Link>
+      ))}
+    </nav>
+  );
+}
 
 export default async function MembersPage({
   searchParams,
@@ -42,6 +95,23 @@ export default async function MembersPage({
     to: single(params.to),
     daysOfWeek: single(params.daysOfWeek),
   });
+
+  const view: View = single(params.view) === "enrolled" ? "enrolled" : "members";
+
+  if (view === "enrolled") {
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-xl font-semibold tracking-tight">Member status</h1>
+          <p className="text-muted-foreground text-sm">
+            Who submitted attendance and posted an update.
+          </p>
+        </div>
+        <ViewSwitch view={view} period={period} />
+        <EnrolledView period={period} params={params} />
+      </div>
+    );
+  }
 
   const page = Math.max(1, Number.parseInt(single(params.page) ?? "1", 10) || 1);
   const search = single(params.search)?.trim() || undefined;
@@ -81,9 +151,9 @@ export default async function MembersPage({
     <div className="flex flex-col gap-1">
       <h1 className="text-xl font-semibold tracking-tight">Member status</h1>
       <p className="text-muted-foreground text-sm">
-        Who submitted attendance and who posted a daily update, per Asia/Dhaka
-        day. One row is one person, however many servers they are in.
+        Who submitted attendance and posted an update.
       </p>
+      <ViewSwitch view={view} period={period} />
     </div>
   );
 

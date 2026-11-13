@@ -24,6 +24,7 @@ import type { ReminderStatus } from "@/lib/api/types";
 import { formatDhaka } from "@/lib/dhaka-date";
 import {
   BROADCAST_STATUS_LABEL,
+  channelsLabel,
   reminderPeriodLabel,
 } from "@/lib/reminder-labels";
 
@@ -82,10 +83,11 @@ export async function BroadcastHistory({ page }: { page: number }) {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Period</TableHead>
+                    <TableHead>Channels</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Targets</TableHead>
-                    <TableHead className="text-right">Sent</TableHead>
-                    <TableHead className="text-right">Failed</TableHead>
+                    <TableHead className="text-right">DMs sent</TableHead>
+                    <TableHead className="text-right">DMs failed</TableHead>
                     <TableHead>Sent by</TableHead>
                     <TableHead>Completed</TableHead>
                     <TableHead>
@@ -98,6 +100,9 @@ export async function BroadcastHistory({ page }: { page: number }) {
                     <TableRow key={row.id}>
                       <TableCell className="font-medium whitespace-nowrap">
                         {reminderPeriodLabel(row)}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        {channelsLabel(row.channels)}
                       </TableCell>
                       <TableCell>
                         <Badge variant={statusVariant(row.status)}>

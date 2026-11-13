@@ -4,21 +4,21 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
 const alertVariants = cva(
-  "group/alert relative grid w-full gap-0.5 rounded-lg border px-2.5 py-2 text-left text-sm has-data-[slot=alert-action]:relative has-data-[slot=alert-action]:pr-18 has-[>svg]:grid-cols-[auto_1fr] has-[>svg]:gap-x-2 *:[svg]:row-span-2 *:[svg]:translate-y-0.5 *:[svg]:text-current *:[svg:not([class*='size-'])]:size-4",
+  "group/alert relative grid w-full gap-1 rounded-xl border-2 px-3.5 py-3 shadow-xs text-left text-sm has-data-[slot=alert-action]:relative has-data-[slot=alert-action]:pr-18 has-[>svg]:grid-cols-[auto_1fr] has-[>svg]:gap-x-2.5 *:[svg]:row-span-2 *:[svg]:translate-y-0.5 *:[svg]:text-current *:[svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
         default: "bg-card text-card-foreground",
         destructive:
-          "bg-card text-destructive *:data-[slot=alert-description]:text-destructive/90 *:[svg]:text-current",
+          "border-destructive bg-destructive/10 text-destructive *:data-[slot=alert-description]:text-destructive/90 *:[svg]:text-current",
         // The health banners distinguish three severities: an outage that is
         // actively losing data (destructive), a guard that fired correctly
         // (warning), and a recovered/healthy state (success). Collapsing the
         // middle one into destructive would train admins to ignore all three.
         warning:
-          "border-warning/40 bg-warning/8 text-warning *:data-[slot=alert-description]:text-warning/90 *:[svg]:text-current",
+          "border-warning bg-warning/10 text-warning *:data-[slot=alert-description]:text-warning/90 *:[svg]:text-current",
         success:
-          "border-success/40 bg-success/8 text-success *:data-[slot=alert-description]:text-success/90 *:[svg]:text-current",
+          "border-success bg-success/10 text-success *:data-[slot=alert-description]:text-success/90 *:[svg]:text-current",
       },
     },
     defaultVariants: {

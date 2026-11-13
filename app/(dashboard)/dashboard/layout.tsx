@@ -22,16 +22,16 @@ export default async function DashboardLayout({
 
   return (
     <div className="flex min-h-svh w-full flex-col md:flex-row">
-      <aside className="bg-sidebar text-sidebar-foreground border-sidebar-border hidden w-64 shrink-0 border-r md:sticky md:top-0 md:flex md:h-svh md:flex-col md:justify-between">
+      <aside className="bg-sidebar text-sidebar-foreground border-sidebar-border hidden w-64 shrink-0 border-r-2 md:sticky md:top-0 md:flex md:h-svh md:flex-col md:justify-between">
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className="border-sidebar-border flex h-14 shrink-0 items-center border-b px-6 text-sm font-semibold tracking-tight">
+          <div className="border-sidebar-border bg-highlight text-highlight-foreground flex h-14 shrink-0 items-center border-b-2 px-6 font-heading text-base font-bold tracking-tight">
             Discord Manager
           </div>
           <div className="flex-1 overflow-y-auto">
             <SidebarNav />
           </div>
         </div>
-        <div className="border-sidebar-border border-t p-3">
+        <div className="border-sidebar-border border-t-2 p-3">
           <Suspense fallback={<AdminIdentitySkeleton />}>
             <AdminIdentity />
           </Suspense>
@@ -39,7 +39,7 @@ export default async function DashboardLayout({
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="bg-background/95 supports-[backdrop-filter]:bg-background/75 sticky top-0 z-10 flex h-14 items-center justify-between gap-3 border-b px-3 backdrop-blur md:hidden">
+        <header className="bg-background sticky top-0 z-10 flex h-14 items-center justify-between gap-3 border-b-2 px-3 md:hidden">
           <div className="flex min-w-0 items-center gap-2">
             <MobileNav
               footer={
@@ -48,7 +48,7 @@ export default async function DashboardLayout({
                 </Suspense>
               }
             />
-            <span className="truncate text-sm font-semibold tracking-tight">
+            <span className="truncate font-heading text-base font-bold tracking-tight">
               Discord Manager
             </span>
           </div>

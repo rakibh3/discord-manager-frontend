@@ -84,6 +84,11 @@
       "value": "",
       "type": "string",
       "description": "A registration id, saved automatically by List Registrations."
+    },
+    {
+      "key": "reminderEmailId",
+      "value": "",
+      "type": "string"
     }
   ],
   "event": [
@@ -623,44 +628,6 @@
       "description": "The enrolment roster and the switch that arms the attendance email check. Every route requires ADMIN auth without exception - this holds the names, email addresses and phone numbers of every enrolled student, and there is no membership check that could stand in for a credential here.\n\nHow the feature is turned on, in order:\n1. POST /roster/import - upload the spreadsheet.\n2. GET /roster and GET /roster/settings - check the roll looks right (settings reports `activeEntries`).\n3. PATCH /roster/settings { enforceEmail: true } - arm it. Takes effect on the next submission, no restart.\n\nRollback is PATCH /roster/settings { enforceEmail: false }: one request, immediate, no deploy.\n\nTwo properties worth knowing before you touch it. An import UPSERTS by normalized email and can never deactivate anybody, so a truncated or wrong file adds noise rather than locking students out. And enabling enforcement is REFUSED while the roster has no active entries, because arming an empty gate refuses every student in every server with a correct-looking 403 and no error anywhere.",
       "item": [
         {
-          "name": "Import Roster (Excel/CSV)",
-          "request": {
-            "method": "POST",
-            "url": "{{baseUrl}}/roster/import",
-            "description": "Requires admin auth. Multipart upload, field name `file`. Accepts .xlsx and .csv.\n\nIn Postman: Body > form-data > key `file`, type File, then pick the spreadsheet.\n\nColumns are located by HEADER NAME, never by position, matched case-insensitively after trimming:\n- email: email, email address, e-mail, e mail, mail\n- name: name, full name, student name, fullname\n- phone: phone, phone number, mobile, mobile number, contact, contact number\n\nUnrecognized columns (batch, roll number, ...) are ignored. A sheet with no email or no name column is a 400 naming the headers found, with NOTHING written - every row would fail identically, so a summary of 5,000 identical failures would be a worse report.\n\nA legacy binary .xls is a 400 telling you to re-save as .xlsx (the parser genuinely cannot read that format).\n\nPartial success is a 200, not an error. Valid rows load; invalid ones are skipped and listed in `data.rejectedRows` with the sheet's own row numbers and a reason. An error status would say nothing happened and invite a re-upload, when those rows really did load.\n\nAn address repeated inside one sheet resolves to ONE entry - the last row wins - and is reported in `data.duplicateAddresses` with every row number involved."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "const jsonData = pm.response.json();",
-                  "",
-                  "pm.test('Import succeeded', function () {",
-                  "    pm.response.to.have.status(200);",
-                  "    pm.expect(jsonData.success).to.be.true;",
-                  "    pm.expect(jsonData.data).to.have.property('created');",
-                  "    pm.expect(jsonData.data).to.have.property('updated');",
-                  "    pm.expect(jsonData.data).to.have.property('skipped');",
-                  "});",
-                  "",
-                  "// The counts must account for every data row read.",
-                  "pm.test('Counts reconcile against rows read', function () {",
-                  "    const d = jsonData.data;",
-                  "    pm.expect(d.created + d.updated + d.skipped + d.duplicateRowsCollapsed).to.eql(d.totalRows);",
-                  "});",
-                  "",
-                  "// Skipped rows are actionable: fix these lines in the sheet and re-upload.",
-                  "if (jsonData.data && jsonData.data.skipped > 0) {",
-                  "    console.warn('Rows skipped:', JSON.stringify(jsonData.data.rejectedRows));",
-                  "}"
-                ]
-              }
-            }
-          ]
-        },
-        {
           "name": "List Roster",
           "request": {
             "method": "GET",
@@ -761,28 +728,6 @@
                   "pm.test('Entry restored', function () {",
                   "    pm.response.to.have.status(200);",
                   "    pm.expect(pm.response.json().data.isActive).to.be.true;",
-                  "});"
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "name": "Import History",
-          "request": {
-            "method": "GET",
-            "url": "{{baseUrl}}/roster/imports?page=1&limit=20",
-            "description": "Requires admin auth. Past imports, most recent first: file name, the administrator who uploaded it, when, and the resulting counts.\n\nThis is the audit trail for the only write path that can change who is allowed to submit attendance. Check it first when the roll is not what someone expected."
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test('History listed', function () {",
-                  "    pm.response.to.have.status(200);",
-                  "    pm.expect(pm.response.json().data).to.be.an('array');",
                   "});"
                 ]
               }
@@ -2298,6 +2243,48 @@
               }
             }
           ]
+        },
+        {
+          "name": "Send Reminder Broadcast - Discord + Email",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/reminders/send",
+            "description": "Sends the same reminder by Discord DM AND email. `channels` is `DISCORD` and/or `EMAIL` (at least one); omitted means `[\"DISCORD\"]`, the old broadcast byte-for-byte.\n\nEmail goes to the address of the roster entry LINKED to each Discord account (linked when the registered student joined Discord). People who never registered get a `NO_ADDRESS` row and the DM only. The 202 adds `channels`, `emailQueued` and `emailNoAddress`; `queuedJobs` stays the DM job count.\n\n503 when `EMAIL` is chosen but `REMINDER_MAIL_FROM_EMAIL` / the token is not set; 400 for an email-only send where nobody is registered.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date\": \"{{reminderDate}}\",\n  \"message\": \"Please submit your daily update for yesterday in #daily-update.\",\n  \"channels\": [\n    \"DISCORD\",\n    \"EMAIL\"\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "List Reminder Emails (Email Log)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/reminders/emails?state=not_opened&page=1&limit=50",
+            "description": "Every reminder email with its delivered / opened state. Filters: `reminderId`, `state` (comma-separated OR: pending, awaiting, delivered, opened, not_opened, bounced, failed, no_address), `from`/`to` (Dhaka day SENT, <= 92 days), `search`, `page`, `limit`.\n\n`delivered` is a superset of `opened` + `not_opened`. `data.counts` is per state under every filter EXCEPT state. Opens come from a tracking pixel and are estimates."
+          }
+        },
+        {
+          "name": "Get Reminder Email Events",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/reminders/emails/{{reminderEmailId}}/events",
+            "description": "The tracking events Mailtrap reported for one email, oldest first: DELIVERY, OPEN, BOUNCE, SOFT_BOUNCE, REJECT, SUSPENSION, SPAM, CLICK, UNSUBSCRIBE."
+          }
+        },
+        {
+          "name": "Export Reminder Emails (.xlsx)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/reminders/emails/export?state=opened",
+            "description": "The email log as an Excel workbook, with the same filters as the list (no paging). Use Postman's \"Send and Download\"."
+          }
         }
       ]
     },
@@ -3510,6 +3497,30 @@
               }
             }
           ]
+        }
+      ]
+    },
+    {
+      "name": "Webhooks",
+      "description": "Server-to-server endpoints called by third parties, never by the dashboard.",
+      "item": [
+        {
+          "name": "Mailtrap Tracking Webhook (signed)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/webhooks/mailtrap",
+            "description": "Called by Mailtrap for `reminders.back2rise.site`. PUBLIC, authenticated by HMAC-SHA256 of the RAW body in the `Mailtrap-Signature` header using `MAILTRAP_WEBHOOK_SIGNING_SECRET` \u2014 this request as saved has no valid signature and answers 401 (503 if the secret is unset).\n\nTo test locally, use `bunx tsx send-test-webhook.ts <recipientId> open`, which signs the body correctly. Duplicate `event_id`s are ignored; non-`reminder` categories and unknown messages answer 200 and are skipped.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"events\": [\n    {\n      \"event\": \"open\",\n      \"event_id\": \"00000000-0000-0000-0000-000000000001\",\n      \"message_id\": \"example\",\n      \"category\": \"reminder\",\n      \"custom_variables\": {\n        \"reminder_email_recipient_id\": \"{{reminderEmailId}}\"\n      },\n      \"timestamp\": 1763000000\n    }\n  ]\n}"
+            }
+          }
         }
       ]
     }

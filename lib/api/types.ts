@@ -493,6 +493,10 @@ export type ReminderDeliveryStatus =
  *  files attendance and never posts an update. */
 export type ReminderCriterion = "MISSING_UPDATE" | "MISSING_BOTH";
 
+/** How a broadcast reaches people. Omitted on a send means `["DISCORD"]` —
+ *  exactly what a broadcast was before email existed. */
+export type ReminderChannel = "DISCORD" | "EMAIL";
+
 /** One **member record**, not one person: an account behind in two servers
  *  appears twice here, which is the per-server audit trail. The queue collapses
  *  them into one DM per account before anything is sent. */
@@ -504,6 +508,9 @@ export type ReminderTarget = {
   displayName: string | null;
   /** How many counted days this member failed the criterion. */
   missedDays: number;
+  /** Whether an email can reach this person: they registered and their
+   *  roster entry is linked to this Discord account. */
+  hasEmail?: boolean;
 };
 
 /** The period every reminder payload echoes back. A single-date send stores the
@@ -535,6 +542,9 @@ export type ReminderTargetsPayload = {
   /** People actually DMed. One account gets exactly one DM however many
    *  servers targeted it, so this can be lower than `targetCount`. */
   uniqueRecipients?: number;
+  /** Of `uniqueRecipients`, how many an email can reach. Reported whatever
+   *  channels are chosen, so the admin sees it before choosing Email. */
+  email?: { reachable: number; notRegistered: number };
   targets: ReminderTarget[];
 };
 
@@ -547,6 +557,8 @@ export type ReminderSendInput = {
   criterion?: ReminderCriterion;
   minMissedDays?: number;
   message: string;
+  /** At least one. Omitted means `["DISCORD"]`. */
+  channels?: ReminderChannel[];
   /** Omitted means every configured server. */
   guildIds?: string[];
 };
@@ -564,7 +576,13 @@ export type ReminderQueued = {
   criterion?: ReminderCriterion;
   minMissedDays?: number;
   targetCount: number;
+  /** DM jobs (one per person); 0 when Discord was not a channel. */
   queuedJobs: number;
+  channels?: ReminderChannel[];
+  /** Email jobs (one per person with an address). */
+  emailQueued?: number;
+  /** People who could not be emailed because they never registered. */
+  emailNoAddress?: number;
   status: ReminderStatus;
 };
 
@@ -581,6 +599,11 @@ export type ReminderProgress = ReminderPeriod & {
   failed: number;
   /** Still `PENDING`. On a `CANCELLED` broadcast these were never attempted. */
   outstanding: number;
+  /** Absent on rows written before email existed — read as Discord only. */
+  channels?: ReminderChannel[];
+  /** Email progress and tracking; `null` when email was not a channel. The DM
+   *  figures above cover Discord only. */
+  email?: ReminderEmailProgress | null;
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
@@ -593,6 +616,7 @@ export type ReminderLogRow = ReminderPeriod & {
   sentCount: number;
   failedCount: number;
   status: ReminderStatus;
+  channels?: ReminderChannel[];
   createdById: string | null;
   /** `null` when the admin account was deleted — the audit row survives on purpose. */
   createdBy: { id: string; name: string; email: string } | null;
@@ -634,6 +658,32 @@ export type ReminderQueueStatus = {
    *  and one healthy server's success must not overwrite the server where the
    *  channel announcement reached nobody. */
   lastFallbackByGuild: Record<string, ReminderFallback>;
+  /** The reminder EMAIL worker — its own queue and pace. */
+  email?: {
+    workerRunning: boolean;
+    workerEnabled: boolean;
+    emailsPerSecond: number;
+    queueDepth: ReminderQueueStatus["queueDepth"];
+    /** `configured: false` → choosing Email on a send answers 503. */
+    mail: {
+      configured: boolean;
+      sandbox: boolean;
+      reason: string | null;
+      fromEmail: string | null;
+    };
+  };
+  /** Mailtrap webhook health. Without events every email reads "not opened",
+   *  which looks like real data — `sentEmails > 0` with `lastEventAt === null`
+   *  is the alarm. */
+  tracking?: {
+    webhookConfigured: boolean;
+    lastEventAt: string | null;
+    sentEmails: number;
+    lastRequestAt: string | null;
+    eventsApplied: number;
+    signatureRejections: number;
+    lastRejectionAt: string | null;
+  };
 };
 
 export type ReminderFallback = {
@@ -645,6 +695,83 @@ export type ReminderFallback = {
   /** A silent failure: every DM delivered, but the channel announcement meant
    *  to catch the DM-closed members reached nobody. */
   missingPermission: boolean;
+};
+
+// ── Reminder emails (the email log) ─────────────────────────────────────────
+
+/** Filter values for the email log. ⚠️ `delivered` is a SUPERSET of `opened`
+ *  and `not_opened` (an open proves arrival), so it is a filter but never a
+ *  row's own state. */
+export type EmailLogState =
+  | "pending"
+  | "awaiting"
+  | "delivered"
+  | "opened"
+  | "not_opened"
+  | "bounced"
+  | "failed"
+  | "no_address";
+
+/** The one state a row is shown as. */
+export type EmailRowState = Exclude<EmailLogState, "delivered">;
+
+export type ReminderEmailCounts = Record<EmailLogState, number> & {
+  total: number;
+};
+
+export type ReminderEmailProgress = ReminderEmailCounts & {
+  /** Opened ÷ delivered; `null` until something is delivered. */
+  openRate: number | null;
+};
+
+/** One reminder email: one person, one broadcast. */
+export type ReminderEmailRow = {
+  id: string;
+  reminderId: string;
+  reminderStartDate: string;
+  reminderEndDate: string;
+  /** The admin who started the broadcast; `null` if that account was removed. */
+  sentBy: string | null;
+  discordUserId: string;
+  /** Current handle, resolved at read time; `null` if no longer in a server. */
+  discordUsername: string | null;
+  name: string | null;
+  email: string | null;
+  state: EmailRowState;
+  status: "PENDING" | "SENT" | "FAILED" | "NO_ADDRESS";
+  errorMessage: string | null;
+  sentAt: string | null;
+  deliveredAt: string | null;
+  firstOpenedAt: string | null;
+  lastOpenedAt: string | null;
+  openCount: number;
+  bouncedAt: string | null;
+  bounceReason: string | null;
+  spamReportedAt: string | null;
+};
+
+export type ReminderEmailLogPayload = {
+  rows: ReminderEmailRow[];
+  /** Per state, under every filter EXCEPT state — what the chips show. */
+  counts: ReminderEmailCounts;
+};
+
+export type ReminderEmailEventType =
+  | "DELIVERY"
+  | "OPEN"
+  | "CLICK"
+  | "SOFT_BOUNCE"
+  | "BOUNCE"
+  | "REJECT"
+  | "SUSPENSION"
+  | "SPAM"
+  | "UNSUBSCRIBE";
+
+export type ReminderEmailEvent = {
+  id: string;
+  type: ReminderEmailEventType;
+  occurredAt: string;
+  detail: string | null;
 };
 
 // ── Attendance (public) ──────────────────────────────────────────────────────
@@ -960,47 +1087,6 @@ export type RosterQuery = {
   limit?: number;
 };
 
-export type RosterImportRejectedRow = {
-  rowNumber: number;
-  reason: string;
-};
-
-export type RosterImportDuplicateAddress = {
-  email: string;
-  rowNumbers: number[];
-};
-
-export type RosterImportResult = {
-  importId: string;
-  fileName: string;
-  totalRows: number;
-  created: number;
-  updated: number;
-  skipped: number;
-  duplicates: number;
-  duplicateRowsCollapsed: number;
-  rejectedRows: RosterImportRejectedRow[];
-  duplicateAddresses: RosterImportDuplicateAddress[];
-  batchFailures?: unknown[];
-};
-
-export type RosterImportHistoryItem = {
-  id: string;
-  fileName: string;
-  totalRows: number;
-  created: number;
-  updated: number;
-  skipped: number;
-  duplicates: number;
-  duplicateRowsCollapsed: number;
-  rejectedRowsCount?: number;
-  rejectedRows?: RosterImportRejectedRow[];
-  duplicateAddresses?: RosterImportDuplicateAddress[];
-  importedAt?: string;
-  createdAt?: string;
-  importedBy?: { id: string; name: string; email: string } | null;
-  uploadedBy?: { id: string; name: string; email: string } | null;
-};
 
 export type RosterSettings = {
   enforceEmail: boolean;
@@ -1225,6 +1311,12 @@ export type Registration = {
   discordUsername: string;
   status: RegistrationStatus;
   enrolledAt: string | null;
+  /** Whether the roster entry is linked to the Discord account that joined
+   *  with the declared handle. Linking happens automatically on join; `false`
+   *  means the student has not joined a server yet (or the handle is ambiguous
+   *  or mistyped — fix it from the roster page). */
+  linked: boolean;
+  linkedAt: string | null;
   welcomeEmailStatus: WelcomeEmailStatus;
   welcomeEmailSentAt: string | null;
   /** Why the email failed, when it did. */

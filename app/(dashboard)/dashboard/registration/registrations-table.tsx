@@ -357,9 +357,21 @@ export function RegistrationsTable({
                       </span>
                     </TableCell>
                     <TableCell>
-                      <span className="font-mono text-xs">
-                        @{registration.discordUsername}
-                      </span>
+                      <div className="flex flex-col items-start gap-1">
+                        <span className="font-mono text-xs">
+                          @{registration.discordUsername}
+                        </span>
+                        {registration.linked ? (
+                          <Badge variant="success">Linked</Badge>
+                        ) : (
+                          <Badge
+                            variant="outline"
+                            title="Linked automatically when this username joins a server"
+                          >
+                            Not joined Discord
+                          </Badge>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell>
                       {registration.status === "ENROLLED" ? (

@@ -4,7 +4,7 @@ import {
   ClipboardList,
   GraduationCap,
   LayoutDashboard,
-  LineChart,
+  MailCheck,
   Megaphone,
   MessagesSquare,
   Send,
@@ -77,8 +77,14 @@ export const NAV_GROUPS: NavGroup[] = [
       {
         href: "/dashboard/reminders",
         label: "Reminders",
-        description: "DM students who fall behind",
+        description: "Remind students who fall behind",
         icon: Send,
+      },
+      {
+        href: "/dashboard/reminders/emails",
+        label: "Email log",
+        description: "Who was emailed, who opened it",
+        icon: MailCheck,
       },
     ],
   },
@@ -118,14 +124,8 @@ export const NAV_GROUPS: NavGroup[] = [
       {
         href: "/dashboard/members",
         label: "Member Status",
-        description: "Who submitted and who posted, per day",
+        description: "Discord members and enrolled students",
         icon: Users,
-      },
-      {
-        href: "/dashboard/roster/status",
-        label: "Roster Engagement",
-        description: "Per-student attendance over a date range",
-        icon: LineChart,
       },
     ],
   },
@@ -153,9 +153,8 @@ export function isActive(pathname: string, item: NavItem): boolean {
 
 /**
  * `isActive` with precedence: when two items match a pathname, the more
- * specific one (longer href) wins the highlight, so `/dashboard/roster/status`
- * lights up "Roster Engagement" alone instead of also lighting up
- * "Enrolment Roster".
+ * specific one (longer href) wins the highlight, so `/dashboard/reminders/emails`
+ * lights up "Email log" alone instead of also lighting up "Reminders".
  */
 export function isItemActive(
   pathname: string,

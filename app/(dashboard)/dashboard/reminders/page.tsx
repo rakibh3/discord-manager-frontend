@@ -1,9 +1,12 @@
+import { Mail } from "lucide-react";
 import type { Metadata } from "next";
+import Link from "next/link";
 import { Suspense } from "react";
 
 import { Composer } from "./composer";
 import { BroadcastHistory } from "./history";
 import { QueueHealthPanel } from "./queue-health";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getServersQuietly } from "@/lib/api/endpoints/discord";
 import { getQueueStatus } from "@/lib/api/endpoints/reminders";
@@ -29,6 +32,14 @@ async function SendComposer() {
     <Composer
       servers={servers}
       dmPerSecond={status?.dmPerSecond ?? 2}
+      email={{
+        configured: status?.email?.mail.configured ?? false,
+        reason:
+          status?.email?.mail.reason ??
+          (status ? null : "Queue status is unavailable."),
+        fromEmail: status?.email?.mail.fromEmail ?? null,
+        perSecond: status?.email?.emailsPerSecond ?? 5,
+      }}
       sendingDisabled={redisDown}
       disabledReason={
         redisDown
@@ -51,13 +62,19 @@ export default async function RemindersPage({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold tracking-tight">Reminders</h1>
-        <p className="text-muted-foreground text-sm">
-          Direct-message people who are behind on their daily update, for a day
-          or a span of days, across every configured server. Delivery is paced,
-          one DM per person, and cannot be undone.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-xl font-semibold tracking-tight">Reminders</h1>
+          <p className="text-muted-foreground text-sm">
+            Nudge students who are behind, by Discord DM or email.
+          </p>
+        </div>
+        <Button variant="outline" size="sm" asChild>
+          <Link href="/dashboard/reminders/emails">
+            <Mail data-icon="inline-start" />
+            Email log
+          </Link>
+        </Button>
       </div>
 
       <Suspense fallback={<Skeleton className="h-56" />}>

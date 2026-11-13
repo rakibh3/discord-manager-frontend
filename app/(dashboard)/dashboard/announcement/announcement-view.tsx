@@ -164,12 +164,8 @@ export function AnnouncementView({
             Attempt {stuckAttempt.attempt} is stuck mid-send
           </AlertTitle>
           <AlertDescription>
-            It claimed today but never recorded a result, which means the
-            backend crashed between the claim and the post. Whether a message
-            actually reached the channel is unknown — check{" "}
-            <code className="font-mono text-xs">#attendance</code> in Discord
-            first, then use the forced send to recover the day if nothing is
-            there.
+            Check <code className="font-mono text-xs">#attendance</code> in
+            Discord. If nothing was posted, use the forced send.
           </AlertDescription>
         </Alert>
       ) : null}
@@ -195,14 +191,7 @@ export function AnnouncementView({
                     : "Not posted"}
               </Badge>
             </CardTitle>
-            <CardDescription>
-              {formatCivilDate(today.date)} · at most one post per day{" "}
-              {servers.length > 1 ? "per server " : ""}, enforced by the backend
-              rather than by timing.
-              {servers.length > 1
-                ? " Each server takes its own day-claim, so a failure in one never consumes another's day."
-                : null}
-            </CardDescription>
+            <CardDescription>{formatCivilDate(today.date)}</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <dl className="grid gap-3 sm:grid-cols-2">
@@ -223,28 +212,13 @@ export function AnnouncementView({
                   )}
                 </dd>
               </div>
-              <div className="flex flex-col gap-0.5">
-                <dt className="text-muted-foreground text-xs">
-                  {servers.length === 1 ? "Channel ID" : "Channels"}
-                </dt>
-                <dd className="font-mono text-sm">
-                  {servers.length === 1
-                    ? (servers[0]?.channelId ?? "—")
-                    : `${servers.length} servers`}
-                </dd>
-              </div>
-              <div className="flex flex-col gap-0.5">
-                <dt className="text-muted-foreground text-xs">
-                  Scheduler process
-                </dt>
-                <dd className="text-sm font-medium">
-                  {scheduler.running ? "Running" : "Not running"}
-                </dd>
-              </div>
-              <div className="flex flex-col gap-0.5">
-                <dt className="text-muted-foreground text-xs">Attempts today</dt>
-                <dd className="text-sm font-medium">{attempts.length}</dd>
-              </div>
+              {/* Only worth a line when it is wrong. */}
+              {!scheduler.running ? (
+                <div className="flex flex-col gap-0.5">
+                  <dt className="text-muted-foreground text-xs">Scheduler</dt>
+                  <dd className="text-sm font-medium">Not running</dd>
+                </div>
+              ) : null}
             </dl>
 
             {servers.length > 1 ? (
@@ -284,10 +258,7 @@ export function AnnouncementView({
         <Card>
           <CardHeader>
             <CardTitle>Attempts today</CardTitle>
-            <CardDescription>
-              Every send filed against {formatCivilDate(today.date)}, scheduled
-              and manual alike. A failed attempt does not consume the day.
-            </CardDescription>
+            <CardDescription>A failed attempt doesn&rsquo;t use up the day.</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
             {attempts.length === 0 ? (
@@ -386,20 +357,12 @@ export function AnnouncementView({
             Message and schedule
           </CardTitle>
           <CardDescription>
-            Currently {schedule.enabled ? "enabled" : "disabled"}, posting at{" "}
-            {formatWallClock(schedule.announceTime)} on{" "}
-            {formatWeekdays(schedule.daysOfWeek)} (
-            {schedule.timezone}). Last changed{" "}
+            {schedule.enabled
+              ? `${formatWallClock(schedule.announceTime)} · ${formatWeekdays(schedule.daysOfWeek)}`
+              : "Paused"}
+            {" · last changed "}
             {formatDhaka(template.updatedAt)}
-            {template.updatedBy
-              ? ` by ${template.updatedBy.name}`
-              : " (the admin who changed it has since been deleted)"}
-            . The post time is also when{" "}
-            <code className="font-mono text-xs">#daily-update</code> opens
-            {channelWindow
-              ? `, and it locks at ${formatWallClock(channelWindow.closeTime)}`
-              : null}
-            .
+            {template.updatedBy ? ` by ${template.updatedBy.name}` : null}
           </CardDescription>
         </CardHeader>
         <CardContent>

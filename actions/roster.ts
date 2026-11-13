@@ -5,14 +5,12 @@ import { revalidatePath } from "next/cache";
 import { ApiError } from "@/lib/api/client";
 import {
   deactivateRosterEntry,
-  importRoster,
   patchRosterSettings,
   restoreRosterEntry,
   updateRosterEntry,
 } from "@/lib/api/endpoints/roster";
 import type {
   RosterEntry,
-  RosterImportResult,
   RosterSettings,
   UpdateRosterEntryInput,
 } from "@/lib/api/types";
@@ -39,30 +37,6 @@ export async function saveRosterSettings(
     return {
       ok: false,
       message: "An unexpected error occurred while saving roster settings.",
-    };
-  }
-}
-
-export type RosterImportActionResult =
-  | { ok: true; data: RosterImportResult; message: string }
-  | { ok: false; message: string };
-
-export async function importRosterFile(
-  formData: FormData,
-): Promise<RosterImportActionResult> {
-  try {
-    const data = await importRoster(formData);
-    revalidatePath("/dashboard/roster");
-    revalidatePath("/dashboard");
-    const message = `Import complete: ${data.created} created, ${data.updated} updated, ${data.skipped} skipped.`;
-    return { ok: true, data, message };
-  } catch (error) {
-    if (error instanceof ApiError) {
-      return { ok: false, message: error.message };
-    }
-    return {
-      ok: false,
-      message: "Could not import spreadsheet. Please check the file and try again.",
     };
   }
 }

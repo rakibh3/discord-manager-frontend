@@ -1,31 +1,66 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { CircleAlert, CircleCheck, CircleX } from "lucide-react";
+import { type ReactNode, useEffect, useState } from "react";
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import type { ReminderQueueStatus } from "@/lib/api/types";
+import { cn } from "@/lib/utils";
 
 const POLL_INTERVAL_MS = 10_000;
 
-function Stat({ label, value }: { label: string; value: string }) {
+type Tone = "ok" | "warn" | "down";
+
+/** One subsystem, one word. The detail lives in its tooltip. */
+function StatusChip({
+  tone,
+  label,
+  value,
+  hint,
+}: {
+  tone: Tone;
+  label: string;
+  value: string;
+  hint?: string;
+}) {
+  const Icon = tone === "ok" ? CircleCheck : tone === "warn" ? CircleAlert : CircleX;
   return (
-    <div className="flex flex-col gap-0.5">
-      <dt className="text-muted-foreground text-xs">{label}</dt>
-      <dd className="font-mono text-sm font-medium tabular-nums">{value}</dd>
-    </div>
+    <span className="flex items-center gap-1.5 text-sm" title={hint}>
+      <Icon
+        aria-hidden
+        className={cn(
+          "size-4 shrink-0",
+          tone === "ok" && "text-emerald-600 dark:text-emerald-400",
+          tone === "warn" && "text-amber-600 dark:text-amber-400",
+          tone === "down" && "text-destructive",
+        )}
+      />
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-medium">{value}</span>
+    </span>
   );
 }
 
-/** Queue and worker health, polled every 10 seconds. `redisConnected: false`
- *  means sending is down but the bot, ingestion and scheduler are unaffected. */
+/** A problem worth acting on: one line, plus the exact fix when there is one. */
+function Issue({ tone, children }: { tone: Exclude<Tone, "ok">; children: ReactNode }) {
+  return (
+    <li
+      className={cn(
+        "flex items-start gap-2 rounded-md px-3 py-2 text-sm",
+        tone === "down"
+          ? "bg-destructive/10 text-destructive"
+          : "bg-amber-500/10 text-amber-800 dark:text-amber-300",
+      )}
+    >
+      <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
+      <span>{children}</span>
+    </li>
+  );
+}
+
+/** Queue, worker, email and tracking health in one compact strip, polled every
+ *  10 seconds. Healthy subsystems are a single word; only problems get a line
+ *  of their own, and only while they are problems. */
 export function QueueHealthPanel({
   initial,
 }: {
@@ -66,87 +101,129 @@ export function QueueHealthPanel({
     };
   }, []);
 
-  const { queueDepth } = status;
+  const { queueDepth, email, tracking } = status;
+  // Emails were accepted but no tracking event ever arrived: every email reads
+  // "not opened", which looks like real data. This is the alarm for that.
+  const trackingSilent =
+    tracking !== undefined &&
+    tracking.sentEmails > 0 &&
+    tracking.lastEventAt === null;
+
+  const discordTone: Tone = !status.redisConnected
+    ? "down"
+    : status.workerRunning
+      ? "ok"
+      : "warn";
+  const emailTone: Tone | null = email
+    ? email.mail.configured && email.workerRunning
+      ? "ok"
+      : "warn"
+    : null;
+  const trackingTone: Tone | null = tracking
+    ? tracking.webhookConfigured && !trackingSilent
+      ? "ok"
+      : "warn"
+    : null;
+
+  const busy = queueDepth
+    ? queueDepth.waiting + queueDepth.active + queueDepth.delayed
+    : 0;
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex flex-wrap items-center gap-2">
-          Queue health
-          <Badge variant={status.redisConnected ? "secondary" : "destructive"}>
-            {status.redisConnected ? "Redis connected" : "Redis unreachable"}
-          </Badge>
-          <Badge variant={status.workerRunning ? "secondary" : "outline"}>
-            {status.workerRunning
-              ? "Worker running"
-              : status.workerEnabled
-                ? "Worker stopped"
-                : "Worker disabled"}
-          </Badge>
-        </CardTitle>
-        <CardDescription>
-          Refreshes every 10 seconds. Delivery is paced at{" "}
-          {status.dmPerSecond} DM{status.dmPerSecond === 1 ? "" : "s"} per
-          second — that pacing is what keeps the bot from being banned.
-        </CardDescription>
-      </CardHeader>
+    <Card className="py-4">
+      <CardContent className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+          <StatusChip
+            tone={discordTone}
+            label="Discord"
+            value={
+              !status.redisConnected
+                ? "Queue down"
+                : status.workerRunning
+                  ? `Ready · ${status.dmPerSecond}/s`
+                  : "Worker stopped"
+            }
+            hint="DMs are paced deliberately — that pacing keeps the bot from being banned."
+          />
+          {email && emailTone ? (
+            <StatusChip
+              tone={emailTone}
+              label="Email"
+              value={
+                !email.mail.configured
+                  ? "Not set up"
+                  : email.mail.sandbox
+                    ? "Sandbox"
+                    : email.workerRunning
+                      ? `Ready · ${email.emailsPerSecond}/s`
+                      : "Worker stopped"
+              }
+              hint={email.mail.fromEmail ?? undefined}
+            />
+          ) : null}
+          {tracking && trackingTone ? (
+            <StatusChip
+              tone={trackingTone}
+              label="Tracking"
+              value={
+                !tracking.webhookConfigured
+                  ? "Off"
+                  : trackingSilent
+                    ? "No events yet"
+                    : "On"
+              }
+            />
+          ) : null}
+          {queueDepth === null ? (
+            <span className="text-muted-foreground text-sm">
+              Queue depth unavailable
+            </span>
+          ) : busy > 0 || queueDepth.failed > 0 ? (
+            <span className="text-muted-foreground text-sm tabular-nums">
+              {queueDepth.waiting} waiting · {queueDepth.active} active
+              {queueDepth.delayed ? ` · ${queueDepth.delayed} delayed` : ""}
+              {queueDepth.failed ? ` · ${queueDepth.failed} failed` : ""}
+            </span>
+          ) : null}
+        </div>
 
-      <CardContent className="flex flex-col gap-4">
-        {!status.redisConnected ? (
-          <Alert variant="destructive">
-            <AlertTitle>Sending is unavailable</AlertTitle>
-            <AlertDescription>
-              The reminder queue&rsquo;s Redis connection is down, so{" "}
-              <strong>a send will be rejected with 503</strong> and the send
-              control is disabled.
-              <br />
-              <br />
-              Everything else keeps working normally — the API, the Discord bot,
-              daily-update message ingestion and the channel scheduler are all
-              unaffected. <strong>Do not restart the server</strong>; that would
-              take down the parts that are fine. Restore Redis instead.
-              {status.redisError ? (
-                <>
-                  {" "}
-                  Reported error: <em>{status.redisError}</em>
-                </>
-              ) : null}
-            </AlertDescription>
-          </Alert>
-        ) : null}
-
-        {status.redisConnected && !status.workerRunning ? (
-          <Alert variant="warning">
-            <AlertTitle>
-              {status.workerEnabled
-                ? "The worker is not running"
-                : "The worker is disabled on this process"}
-            </AlertTitle>
-            <AlertDescription>
-              Jobs can still be queued, but nothing will be delivered until a
-              worker picks them up. A broadcast queued now would sit at{" "}
-              <strong>Queued</strong> indefinitely.
-            </AlertDescription>
-          </Alert>
-        ) : null}
-
-        <dl className="grid gap-3 sm:grid-cols-4">
-          {queueDepth ? (
-            <>
-              <Stat label="Waiting" value={queueDepth.waiting.toLocaleString()} />
-              <Stat label="Active" value={queueDepth.active.toLocaleString()} />
-              <Stat label="Delayed" value={queueDepth.delayed.toLocaleString()} />
-              <Stat label="Failed jobs" value={queueDepth.failed.toLocaleString()} />
-            </>
-          ) : (
-            // `null` means the queue object could not be reached; rendering
-            // zeros would read as "the queue is empty", the opposite meaning.
-            <div className="text-muted-foreground sm:col-span-4 text-sm">
-              Queue depth is unavailable — the queue could not be reached, so
-              there is no count to show. This is not the same as an empty queue.
-            </div>
-          )}
-        </dl>
+        <ul className="flex flex-col gap-2 empty:hidden">
+          {!status.redisConnected ? (
+            <Issue tone="down">
+              <strong>Sending is off — Redis is unreachable.</strong> Everything
+              else keeps working. Restore Redis; don&rsquo;t restart the server.
+              {status.redisError ? ` (${status.redisError})` : null}
+            </Issue>
+          ) : null}
+          {status.redisConnected && !status.workerRunning ? (
+            <Issue tone="warn">
+              The DM worker isn&rsquo;t running, so a broadcast would stay
+              queued.
+            </Issue>
+          ) : null}
+          {email && !email.mail.configured ? (
+            <Issue tone="warn">
+              Email reminders aren&rsquo;t set up. {email.mail.reason}
+            </Issue>
+          ) : null}
+          {tracking && !tracking.webhookConfigured ? (
+            <Issue tone="warn">
+              Opens and deliveries can&rsquo;t be tracked until{" "}
+              <code className="text-xs">MAILTRAP_WEBHOOK_SIGNING_SECRET</code>{" "}
+              is set.
+            </Issue>
+          ) : trackingSilent ? (
+            <Issue tone="warn">
+              {tracking.sentEmails.toLocaleString()} email
+              {tracking.sentEmails === 1 ? "" : "s"} sent, but Mailtrap
+              hasn&rsquo;t reported anything yet — check the webhook on
+              reminders.back2rise.site.
+              {tracking.signatureRejections > 0
+                ? ` ${tracking.signatureRejections} request(s) had a bad signature.`
+                : null}
+            </Issue>
+          ) : null}
+        </ul>
       </CardContent>
     </Card>
   );

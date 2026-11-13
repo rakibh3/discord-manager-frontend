@@ -33,11 +33,9 @@ mock.module("@/lib/auth/session", () => ({
 
 const {
   getRoster,
-  importRoster,
   updateRosterEntry,
   deactivateRosterEntry,
   restoreRosterEntry,
-  getRosterImports,
   getRosterSettings,
   patchRosterSettings,
 } = await import("@/lib/api/endpoints/roster");
@@ -112,40 +110,6 @@ describe("roster endpoints", () => {
     expect(res.data).toEqual(mockList);
     expect(res.meta?.total).toBe(1);
     expect(calls[0].url).toBe("http://backend.test/api/roster?status=active&search=rakib&page=1&limit=50");
-    expect(calls[0].authorization).toBe("mock-access-token");
-  });
-
-  test("importRoster posts FormData to /roster/import", async () => {
-    const mockImportResult = {
-      importId: "imp1",
-      fileName: "batch-11.xlsx",
-      totalRows: 500,
-      created: 412,
-      updated: 75,
-      skipped: 13,
-      duplicates: 2,
-      duplicateRowsCollapsed: 2,
-      rejectedRows: [{ rowNumber: 44, reason: "Invalid email" }],
-      duplicateAddresses: [{ email: "dup@example.com", rowNumbers: [12, 40] }],
-      batchFailures: [],
-    };
-
-    install(() =>
-      json(200, {
-        success: true,
-        statusCode: 200,
-        data: mockImportResult,
-      }),
-    );
-
-    const formData = new FormData();
-    formData.append("file", new Blob(["fake-csv"]), "students.csv");
-
-    const res = await importRoster(formData);
-
-    expect(res).toEqual(mockImportResult);
-    expect(calls[0].url).toBe("http://backend.test/api/roster/import");
-    expect(calls[0].method).toBe("POST");
     expect(calls[0].authorization).toBe("mock-access-token");
   });
 
@@ -234,37 +198,6 @@ describe("roster endpoints", () => {
     expect(res.isActive).toBe(true);
     expect(calls[0].url).toBe("http://backend.test/api/roster/r1/restore");
     expect(calls[0].method).toBe("PATCH");
-  });
-
-  test("getRosterImports calls /roster/imports", async () => {
-    const mockImports = [
-      {
-        id: "imp1",
-        fileName: "batch-11.xlsx",
-        totalRows: 500,
-        created: 412,
-        updated: 75,
-        skipped: 13,
-        duplicates: 2,
-        duplicateRowsCollapsed: 2,
-        importedAt: "2026-08-19T00:00:00.000Z",
-        importedBy: { id: "a1", name: "Admin", email: "admin@example.com" },
-      },
-    ];
-
-    install(() =>
-      json(200, {
-        success: true,
-        statusCode: 200,
-        data: mockImports,
-        meta: { page: 1, limit: 20, total: 1 },
-      }),
-    );
-
-    const res = await getRosterImports({ page: 1, limit: 20 });
-
-    expect(res.data).toEqual(mockImports);
-    expect(calls[0].url).toBe("http://backend.test/api/roster/imports?page=1&limit=20");
   });
 
   test("getRosterSettings calls /roster/settings", async () => {

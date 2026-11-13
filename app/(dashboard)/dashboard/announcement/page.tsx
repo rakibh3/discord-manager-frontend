@@ -46,8 +46,7 @@ export default function AnnouncementPage() {
           #attendance announcement
         </h1>
         <p className="text-muted-foreground text-sm">
-          The evening message that tells roughly 5,000 students to submit. All
-          times are Asia/Dhaka.
+          The evening post asking students to submit. Times are Asia/Dhaka.
         </p>
       </div>
 

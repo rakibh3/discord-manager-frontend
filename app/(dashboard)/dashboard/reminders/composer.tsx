@@ -49,7 +49,11 @@ import {
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
-import type { DiscordServer, ReminderCriterion } from "@/lib/api/types";
+import type {
+  DiscordServer,
+  ReminderChannel,
+  ReminderCriterion,
+} from "@/lib/api/types";
 import { dhakaYesterday } from "@/lib/dhaka-date";
 import {
   countedDays,
@@ -79,11 +83,19 @@ export function Composer({
   disabledReason,
   dmPerSecond,
   servers,
+  email,
 }: {
   sendingDisabled: boolean;
   disabledReason: string | null;
   dmPerSecond: number;
   servers: DiscordServer[];
+  /** Whether the reminder email sender is configured, and if not, why. */
+  email: {
+    configured: boolean;
+    reason: string | null;
+    fromEmail: string | null;
+    perSecond: number;
+  };
 }) {
   // Yesterday in *Dhaka*, not in the browser's zone — the usual case is
   // reminding people who missed yesterday's update.
@@ -95,6 +107,12 @@ export function Composer({
   const [minMissedDays, setMinMissedDays] = useState(1);
   const [guildIds, setGuildIds] = useState<string[]>([]);
   const [message, setMessage] = useState("");
+  // Discord alone is the default — exactly what a broadcast meant before email
+  // existed. Not part of the preview key: the target list is the same whatever
+  // the channels, only how each person is contacted changes.
+  const [channels, setChannels] = useState<ReminderChannel[]>(["DISCORD"]);
+  const wantsDiscord = channels.includes("DISCORD");
+  const wantsEmail = channels.includes("EMAIL");
   const [preview, setPreview] = useState<TargetPreview | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -131,9 +149,20 @@ export function Composer({
       : null;
 
   const recipients = preview?.ok ? preview.uniqueRecipients : null;
+  const emailReach = preview?.ok ? preview.email : null;
+
+  const channelProblem =
+    channels.length === 0
+      ? "Choose at least one channel."
+      : wantsEmail && !email.configured
+        ? (email.reason ?? "Email isn't set up on the server yet.")
+        : wantsEmail && !wantsDiscord && emailReach?.reachable === 0
+          ? "None of these people has a registered email address. Add Discord as a channel."
+          : null;
 
   const canSend =
     !sendingDisabled &&
+    !channelProblem &&
     recipients !== null &&
     recipients > 0 &&
     trimmed.length > 0 &&
@@ -154,7 +183,11 @@ export function Composer({
     submitted.current = true;
 
     startSend(async () => {
-      const result = await sendBroadcast({ ...selection, message: trimmed });
+      const result = await sendBroadcast({
+        ...selection,
+        message: trimmed,
+        channels,
+      });
       // A 202 redirects and never returns, so reaching here means it did not
       // queue. Release the guard so the admin can act on the outcome.
       submitted.current = false;
@@ -180,8 +213,31 @@ export function Composer({
     });
   };
 
+  // Delivery time is the slower of the two queues, each at its own pace.
   const estimate =
-    recipients !== null ? estimateRemaining(recipients, dmPerSecond) : null;
+    recipients !== null
+      ? estimateRemaining(
+          Math.max(
+            wantsDiscord ? recipients / dmPerSecond : 0,
+            wantsEmail && emailReach ? emailReach.reachable / email.perSecond : 0,
+          ),
+          1,
+        )
+      : null;
+
+  const toggleChannel = (channel: ReminderChannel) =>
+    setChannels((current) =>
+      current.includes(channel)
+        ? current.filter((entry) => entry !== channel)
+        : [...current, channel],
+    );
+
+  const channelLabel =
+    wantsDiscord && wantsEmail
+      ? "Discord DM and email"
+      : wantsEmail
+        ? "email"
+        : "Discord DM";
 
   /** An empty selection means "every server", and every box is shown ticked.
    *  Un-ticking one from that state has to mean "all but this one" — the
@@ -215,9 +271,7 @@ export function Composer({
       <CardHeader>
         <CardTitle>Send a reminder</CardTitle>
         <CardDescription>
-          Direct-messages everyone who failed the chosen criterion over the
-          chosen period. One Discord account receives exactly one DM however
-          many servers it is targeted through. This cannot be undone.
+          Message everyone who&rsquo;s behind. This can&rsquo;t be undone.
         </CardDescription>
       </CardHeader>
 
@@ -246,15 +300,12 @@ export function Composer({
                 Another broadcast already covers one of these days
               </AlertTitle>
               <AlertDescription className="flex flex-col items-start gap-2">
+                {/* An overlap check, not date equality — worth saying, because
+                    "but I picked a different date" is the obvious reaction. */}
                 <span>
-                  {/* An overlap check, not date equality — worth saying, because
-                      "but I picked a different date" is the obvious reaction. */}
-                  Only one broadcast may be in flight for any given day: it
-                  guards the bot&rsquo;s single DM budget, so an unfinished run
-                  sharing <strong>any</strong> day with this period blocks it,
-                  whatever criterion or servers either one used.
+                  A broadcast that shares any of these days is still running.
+                  Wait for it, or cancel it.
                 </span>
-                <span>{outcome.message}</span>
                 {outcome.existingId ? (
                   <Button variant="outline" size="sm" asChild>
                     <Link href={`/dashboard/reminders/${outcome.existingId}`}>
@@ -270,11 +321,8 @@ export function Composer({
             <Alert variant="destructive">
               <AlertTitle>The reminder queue is unreachable</AlertTitle>
               <AlertDescription>
-                Redis could not be reached, so the jobs were refused. The
-                broadcast was <strong>auto-cancelled</strong>, which means this
-                period is not left blocked — you can send again once the queue is
-                back. The API, the bot, message ingestion and the channel
-                scheduler are all unaffected. {outcome.message}
+                Nothing was sent, and the period isn&rsquo;t blocked — try again
+                once the queue is back.
               </AlertDescription>
             </Alert>
           ) : null}
@@ -338,7 +386,7 @@ export function Composer({
               />
               <FieldDescription id={`${thresholdId}-hint`}>
                 {thresholdProblem ??
-                  `Out of ${counted} counted day${counted === 1 ? "" : "s"}. A threshold higher than that is refused rather than run as a broadcast that finds nobody.`}
+                  `Out of ${counted} counted day${counted === 1 ? "" : "s"}.`}
               </FieldDescription>
             </Field>
           </div>
@@ -372,6 +420,47 @@ export function Composer({
             </fieldset>
           ) : null}
 
+          <fieldset className="flex flex-col gap-2">
+            <legend className="text-sm font-medium">Send by</legend>
+            <div className="flex flex-wrap gap-x-4 gap-y-2">
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={wantsDiscord}
+                  onCheckedChange={() => toggleChannel("DISCORD")}
+                />
+                Discord DM
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                {/* Never disabled: a disabled box can't say why. Ticking it
+                    while email isn't set up shows the reason and blocks Send. */}
+                <Checkbox
+                  checked={wantsEmail}
+                  onCheckedChange={() => toggleChannel("EMAIL")}
+                />
+                Email
+                {email.fromEmail ? (
+                  <span className="text-muted-foreground font-mono text-xs">
+                    from {email.fromEmail}
+                  </span>
+                ) : null}
+              </label>
+            </div>
+            <p
+              className={
+                channelProblem
+                  ? "text-destructive text-sm"
+                  : "text-muted-foreground text-sm"
+              }
+            >
+              {channelProblem ??
+                (!email.configured
+                  ? "Email isn't set up on the server yet."
+                  : wantsEmail
+                    ? "Students who never registered get the Discord DM only."
+                    : "Email goes to each student's registered address.")}
+            </p>
+          </fieldset>
+
           <Field orientation="horizontal">
             <Button
               type="button"
@@ -399,28 +488,27 @@ export function Composer({
               <AlertTitle>
                 {preview.uniqueRecipients === 0
                   ? "Nobody is behind for this selection"
-                  : `${preview.uniqueRecipients.toLocaleString()} ${preview.uniqueRecipients === 1 ? "person" : "people"} would be messaged`}
+                  : `${preview.uniqueRecipients.toLocaleString()} ${preview.uniqueRecipients === 1 ? "person" : "people"} would be reminded`}
               </AlertTitle>
               <AlertDescription className="flex flex-col gap-2">
                 {preview.uniqueRecipients > 0 ? (
                   <>
-                    <span>
-                      This is the same query the send itself runs, so the two
-                      cannot disagree.
-                      {estimate
-                        ? ` At ${dmPerSecond} DM${dmPerSecond === 1 ? "" : "s"} per second, delivery would take ${estimate}.`
-                        : null}
-                    </span>
+                    {estimate ? (
+                      <span>Delivery takes {estimate}.</span>
+                    ) : null}
+                    {wantsEmail ? (
+                      <span>
+                        {preview.email.reachable.toLocaleString()} can be
+                        emailed · {preview.email.notRegistered.toLocaleString()}{" "}
+                        not registered
+                      </span>
+                    ) : null}
                     {preview.targetCount !== preview.uniqueRecipients ? (
                       // The gap is the per-server audit trail, not duplicate
                       // sends — said plainly, because two different counts on
                       // one screen otherwise read as a bug.
                       <span className="text-muted-foreground">
-                        {preview.targetCount.toLocaleString()} recipient rows
-                        across the targeted servers, but{" "}
-                        {preview.uniqueRecipients.toLocaleString()} actual
-                        people. Someone in two servers is recorded twice and
-                        still receives exactly one DM.
+                        People in two servers are counted once.
                       </span>
                     ) : null}
                     <details className="text-sm">
@@ -472,11 +560,8 @@ export function Composer({
               <span aria-live="polite">
                 {overLimit
                   ? `${Math.abs(remaining).toLocaleString()} characters over the limit.`
-                  : `${remaining.toLocaleString()} characters remaining.`}
-              </span>{" "}
-              The cap is {REMINDER_MESSAGE_MAX_LENGTH.toLocaleString()}, not
-              2,000 — Discord&rsquo;s limit minus the fixed &ldquo;⚠️ Daily
-              Update Reminder&rdquo; heading each DM is wrapped in.
+                  : `${remaining.toLocaleString()} characters left.`}
+              </span>
             </FieldDescription>
           </Field>
 
@@ -495,7 +580,7 @@ export function Composer({
                     {recipients === 1 ? "person" : "people"}?
                   </AlertDialogTitle>
                   <AlertDialogDescription>
-                    This direct-messages{" "}
+                    This sends a <strong>{channelLabel}</strong> reminder to{" "}
                     <strong>
                       {recipients?.toLocaleString()}{" "}
                       {recipients === 1 ? "person" : "people"}
@@ -511,9 +596,19 @@ export function Composer({
                     message is delivered.
                     <br />
                     <br />
-                    Delivery is <strong>paced, not immediate</strong>: at{" "}
-                    {dmPerSecond} DM{dmPerSecond === 1 ? "" : "s"} per second
-                    this runs in the background for {estimate ?? "some time"}.
+                    {wantsEmail && emailReach ? (
+                      <>
+                        Email reaches{" "}
+                        <strong>{emailReach.reachable.toLocaleString()}</strong>{" "}
+                        of them;{" "}
+                        {emailReach.notRegistered.toLocaleString()} never
+                        registered and have no address.
+                        <br />
+                        <br />
+                      </>
+                    ) : null}
+                    Delivery is <strong>paced, not immediate</strong> and runs
+                    in the background for {estimate ?? "some time"}.
                     You can watch progress, and cancel part-way through — but
                     anyone already messaged stays messaged.
                   </AlertDialogDescription>
@@ -538,6 +633,7 @@ export function Composer({
               <p className="text-muted-foreground text-sm">
                 {problem ??
                   thresholdProblem ??
+                  channelProblem ??
                   (recipients === null
                     ? "Preview the recipients for this selection first."
                     : recipients === 0

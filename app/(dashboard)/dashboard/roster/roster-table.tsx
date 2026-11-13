@@ -10,7 +10,6 @@ import {
   RotateCcw,
   Search,
   Trash2,
-  UserCheck,
   UserX,
   X,
 } from "lucide-react";
@@ -341,11 +340,13 @@ export function RosterTable({
                     </TableCell>
 
                     <TableCell>
+                      {/* Active is the normal case — only the exception gets a
+                          badge, so a deactivated student stands out instead of
+                          hiding in a column of identical green pills. */}
                       {entry.isActive ? (
-                        <Badge variant="success">
-                          <UserCheck data-icon="inline-start" aria-hidden />
+                        <span className="text-muted-foreground text-sm">
                           Active
-                        </Badge>
+                        </span>
                       ) : (
                         <Badge variant="secondary">
                           <UserX data-icon="inline-start" aria-hidden />
@@ -373,7 +374,7 @@ export function RosterTable({
                           <Button
                             variant="ghost"
                             size="icon-sm"
-                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                            className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                             onClick={() => setDeactivateTarget(entry)}
                             aria-label={`Deactivate ${entry.name}`}
                           >

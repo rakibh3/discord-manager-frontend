@@ -188,8 +188,7 @@ export default function DiscordPage() {
       <div className="flex flex-col gap-1">
         <h1 className="text-xl font-semibold tracking-tight">Discord servers</h1>
         <p className="text-muted-foreground text-sm">
-          Bot health and the member directory that every other feature reads
-          from, per configured server.
+          Bot health and the synced member list.
         </p>
       </div>
 

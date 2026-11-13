@@ -8,7 +8,7 @@ export const ROSTER_STATUS_LABEL: Record<RosterStatus, string> = {
   MISSING_UPDATE: "Missing update",
   MISSING_ATTENDANCE: "Missing attendance",
   MISSING_BOTH: "Missing both",
-  NEVER_LINKED: "Never linked",
+  NEVER_LINKED: "Not joined Discord",
 };
 
 export const ROSTER_STATUS_DESCRIPTION: Record<RosterStatus, string> = {
@@ -17,7 +17,7 @@ export const ROSTER_STATUS_DESCRIPTION: Record<RosterStatus, string> = {
   MISSING_ATTENDANCE: "Posted a daily update, but did not submit attendance.",
   MISSING_BOTH: "Neither attendance nor a daily update.",
   NEVER_LINKED:
-    "On the roster, but no Discord account has ever linked to this entry. Outreach happens by email.",
+    "Registered, but no Discord account has joined with the username they registered with yet. They are linked automatically when they join; until then, outreach happens by email.",
 };
 
 export const ROSTER_STATUS_COLOR: Record<RosterStatus, string> = {
@@ -60,7 +60,7 @@ export const ROSTER_RANGE_STATUS_LABEL: Record<RosterRangeStatus, string> = {
   ALL_COMPLETE: "Complete every day",
   PARTIAL: "Complete some days",
   NONE: "Complete on no day",
-  NEVER_LINKED: "Never linked",
+  NEVER_LINKED: "Not joined Discord",
 };
 
 export const ROSTER_RANGE_STATUS_DESCRIPTION: Record<RosterRangeStatus, string> = {

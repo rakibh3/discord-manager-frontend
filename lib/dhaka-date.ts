@@ -92,7 +92,11 @@ const dateOnlyFormatter = new Intl.DateTimeFormat("en-GB", {
 });
 
 /** Renders a backend `DateTime` in Dhaka. Returns an em dash for `null`, which
- *  is a real value on most of these fields. */
+ *  is a real value on most of these fields.
+ *
+ *  No "(Dhaka)" suffix: every time in this dashboard is Dhaka time, so a label
+ *  on each one repeated the same word down every column. The zone is stated
+ *  once where it matters (the period picker, exports' column headings). */
 export function formatDhaka(
   value: string | Date | null | undefined,
   style: "datetime" | "date" | "time" = "datetime",
@@ -108,7 +112,7 @@ export function formatDhaka(
         ? dateOnlyFormatter
         : dateTimeFormatter;
 
-  return `${upperMeridiem(formatter.format(instant))} (Dhaka)`;
+  return upperMeridiem(formatter.format(instant));
 }
 
 const WALL_CLOCK_PATTERN = /^(\d{1,2}):(\d{2})$/;

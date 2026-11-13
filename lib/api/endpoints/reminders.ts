@@ -5,7 +5,11 @@ import { cache } from "react";
 import { api, apiRequest } from "@/lib/api/client";
 import type {
   ApiResponse,
+  EmailLogState,
+  ReminderChannel,
   ReminderCriterion,
+  ReminderEmailEvent,
+  ReminderEmailLogPayload,
   ReminderDeliveryStatus,
   ReminderLogRow,
   ReminderProgress,
@@ -59,7 +63,11 @@ export function getTargets(
  *  this one — an overlap check, not date equality, because it guards the bot's
  *  single global DM budget. */
 export function sendReminder(
-  selection: ReminderSelection & { message: string },
+  selection: ReminderSelection & {
+    message: string;
+    /** Omitted or empty means Discord only — the backend default. */
+    channels?: ReminderChannel[];
+  },
 ): Promise<ReminderQueued> {
   return api<ReminderQueued>("/reminders/send", {
     method: "POST",
@@ -70,9 +78,72 @@ export function sendReminder(
       ...(selection.guildIds && selection.guildIds.length > 0
         ? { guildIds: selection.guildIds }
         : {}),
+      ...(selection.channels && selection.channels.length > 0
+        ? { channels: selection.channels }
+        : {}),
       message: selection.message,
     },
   });
+}
+
+/** Filters for the email log and its Excel export — identical on purpose, so
+ *  the file always matches the list on screen. */
+export type ReminderEmailQuery = {
+  reminderId?: string;
+  /** OR-ed. Empty means every state. */
+  states?: EmailLogState[];
+  /** Dhaka day the email was SENT, `YYYY-MM-DD`, inclusive. */
+  from?: string;
+  to?: string;
+  search?: string;
+};
+
+/** Only the filters actually set — an empty value must be OMITTED, since the
+ *  backend answers 400 to `state=`. */
+function emailFilterQuery(query: ReminderEmailQuery = {}) {
+  return {
+    reminderId: query.reminderId || undefined,
+    state: query.states && query.states.length > 0 ? query.states : undefined,
+    from: query.from || undefined,
+    to: query.to || undefined,
+    search: query.search?.trim() || undefined,
+  };
+}
+
+/** `GET /api/reminders/emails` — every reminder email with its delivered /
+ *  opened state. `data.counts` are per state under every filter EXCEPT state,
+ *  so the chips keep their numbers while one of them is selected. */
+export function getReminderEmails(
+  query: ReminderEmailQuery & { page?: number; limit?: number } = {},
+): Promise<ApiResponse<ReminderEmailLogPayload>> {
+  return apiRequest<ReminderEmailLogPayload>("/reminders/emails", {
+    query: { ...emailFilterQuery(query), page: query.page, limit: query.limit },
+  });
+}
+
+/** `GET /api/reminders/emails/:id/events` — the tracking events behind one
+ *  row, oldest first. */
+export function getReminderEmailEvents(
+  recipientId: string,
+): Promise<ReminderEmailEvent[]> {
+  return api<ReminderEmailEvent[]>(
+    `/reminders/emails/${encodeURIComponent(recipientId)}/events`,
+  );
+}
+
+/** The backend path of the .xlsx export for these filters. The browser never
+ *  calls it directly — the Next route handler adds the token and streams it. */
+export function reminderEmailsExportPath(query?: ReminderEmailQuery): string {
+  const params = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(emailFilterQuery(query))) {
+    if (value === undefined) continue;
+    params.set(key, Array.isArray(value) ? value.join(",") : value);
+  }
+
+  const suffix = params.toString();
+
+  return `/reminders/emails/export${suffix ? `?${suffix}` : ""}`;
 }
 
 /** `GET /api/reminders` — history, newest first, paginated. */

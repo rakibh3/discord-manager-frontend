@@ -6,11 +6,14 @@ import { redirect } from "next/navigation";
 import { ApiError } from "@/lib/api/client";
 import {
   cancelReminder,
+  getReminderEmailEvents,
   getTargets,
   sendReminder,
 } from "@/lib/api/endpoints/reminders";
 import type {
+  ReminderChannel,
   ReminderCriterion,
+  ReminderEmailEvent,
   ReminderProgress,
   ReminderTarget,
 } from "@/lib/api/types";
@@ -41,6 +44,9 @@ export type TargetPreview =
       /** People actually DMed. One account targeted through two servers still
        *  receives exactly one DM, so this is the number that matters. */
       uniqueRecipients: number;
+      /** Of those people, how many an email can reach (registered and linked
+       *  to their Discord account) and how many it cannot. */
+      email: { reachable: number; notRegistered: number };
       /** A bounded slice — the endpoint itself returns thousands of rows. */
       sample: ReminderTarget[];
     }
@@ -78,6 +84,10 @@ export async function previewTargets(
       ok: true,
       targetCount: payload.targetCount,
       uniqueRecipients: payload.uniqueRecipients ?? payload.targetCount,
+      email: payload.email ?? {
+        reachable: 0,
+        notRegistered: payload.uniqueRecipients ?? payload.targetCount,
+      },
       sample: payload.targets.slice(0, PREVIEW_SLICE),
     };
   } catch (error) {
@@ -102,9 +112,19 @@ function extractExistingId(message: string): string | null {
 /** Queues a broadcast. On 202 this redirects to the progress view and never
  *  returns; every other outcome comes back as a discriminated result. */
 export async function sendBroadcast(
-  selection: ReminderSelectionInput & { message: string },
+  selection: ReminderSelectionInput & {
+    message: string;
+    channels: ReminderChannel[];
+  },
 ): Promise<SendResult> {
   const message = selection.message.trim();
+
+  if (selection.channels.length === 0) {
+    return {
+      outcome: "error",
+      message: "Choose at least one channel: Discord, Email, or both.",
+    };
+  }
 
   if (message.length === 0) {
     return { outcome: "error", message: "Write a message before sending." };
@@ -159,6 +179,23 @@ export async function sendBroadcast(
   // until a hard refresh.
   revalidatePath("/dashboard");
   redirect(`/dashboard/reminders/${queuedId}`);
+}
+
+export type EmailEventsResult =
+  | { ok: true; events: ReminderEmailEvent[] }
+  | { ok: false; message: string };
+
+/** The tracking events behind one row of the email log, loaded on demand when
+ *  the admin opens it. */
+export async function loadEmailEvents(
+  recipientId: string,
+): Promise<EmailEventsResult> {
+  try {
+    return { ok: true, events: await getReminderEmailEvents(recipientId) };
+  } catch (error) {
+    if (!(error instanceof ApiError)) throw error;
+    return { ok: false, message: error.message };
+  }
 }
 
 export type CancelResult =

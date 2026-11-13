@@ -171,8 +171,7 @@ export function RegistrationSettingsCard({
           <StateBadge settings={settings} />
         </div>
         <CardDescription>
-          {describeState(settings)} Everything below takes effect when you
-          save.
+          {describeState(settings)}
         </CardDescription>
 
         <CardAction className="flex items-center gap-3">
@@ -231,9 +230,7 @@ export function RegistrationSettingsCard({
             <FieldSet>
               <FieldLegend variant="label">Registration window</FieldLegend>
               <FieldDescription>
-                Asia/Dhaka. Leave the opening empty to open as soon as the form
-                is switched on; leave the closing empty to stay open until you
-                switch it off.
+                Leave empty to open now or stay open until switched off.
               </FieldDescription>
 
               <div className="grid gap-4 sm:grid-cols-2">
@@ -288,11 +285,7 @@ export function RegistrationSettingsCard({
                   Add registrations to the enrolment roster automatically
                 </FieldLabel>
                 <FieldDescription>
-                  Each registration becomes a roster entry straight away, so the
-                  person passes the attendance email check. An email already on
-                  the roster is never changed, and a removed entry is never
-                  reinstated. When this is off, registrations wait below until
-                  you add them.
+                  Off: registrations wait below until you add them.
                 </FieldDescription>
               </div>
             </Field>
@@ -311,8 +304,7 @@ export function RegistrationSettingsCard({
                   Send a welcome email after registration
                 </FieldLabel>
                 <FieldDescription>
-                  Sent once per registered address, a few moments after the
-                  form is submitted.
+                  Sent once, right after they register.
                 </FieldDescription>
               </div>
             </Field>
@@ -331,9 +323,7 @@ export function RegistrationSettingsCard({
                 }
               />
               <FieldDescription>
-                Included in the welcome email as the &ldquo;Join the Discord
-                server&rdquo; button. Use an invite that does not expire. Leave
-                empty to send the email without a link.
+                Use an invite that doesn&rsquo;t expire.
               </FieldDescription>
             </Field>
 

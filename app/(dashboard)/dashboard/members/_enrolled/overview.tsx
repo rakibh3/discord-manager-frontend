@@ -43,7 +43,7 @@ function CountCard({
   hint?: string;
 }) {
   return (
-    <Card>
+    <Card title={hint}>
       <CardContent className="flex flex-col gap-1 py-4">
         <p className="text-muted-foreground text-xs">{label}</p>
         <p className="font-mono text-2xl font-semibold tabular-nums">
@@ -52,9 +52,6 @@ function CountCard({
         <p className="text-muted-foreground text-xs">
           {percent(value, total)} of {total.toLocaleString()} {unit}
         </p>
-        {hint ? (
-          <p className="text-muted-foreground text-xs leading-snug">{hint}</p>
-        ) : null}
       </CardContent>
     </Card>
   );
@@ -159,8 +156,7 @@ export async function RosterStatusOverview({ period }: { period: Period }) {
           <CardHeader>
             <CardTitle>Range breakdown</CardTitle>
             <CardDescription>
-              {formatPeriod(period)} (Asia/Dhaka). Every enrolled person falls
-              into exactly one of these buckets.
+              {formatPeriod(period)}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -276,8 +272,7 @@ export async function RosterStatusOverview({ period }: { period: Period }) {
         <CardHeader>
           <CardTitle>Status breakdown</CardTitle>
           <CardDescription>
-            {formatPeriod(period)} (Asia/Dhaka). Paired enrollees fall into one
-            of these four buckets; unpaired enrollees are read separately.
+            {formatPeriod(period)}
           </CardDescription>
         </CardHeader>
         <CardContent>

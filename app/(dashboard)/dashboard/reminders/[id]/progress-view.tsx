@@ -1,6 +1,7 @@
 "use client";
 
-import { Ban } from "lucide-react";
+import { Ban, Mail } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
 
@@ -35,6 +36,8 @@ import { WEEKDAY_SHORT } from "@/lib/period";
 import {
   BROADCAST_STATUS_LABEL,
   broadcastStatusDescription,
+  channelsLabel,
+  EMAIL_STATE_DESCRIPTION,
   CRITERION_LABEL,
   estimateRemaining,
   isLive,
@@ -103,10 +106,10 @@ export function ProgressView({
 
     const timer = setInterval(async () => {
       try {
-        const response = await fetch(
-          `/api/reminders/${progress.id}/progress`,
-          { signal: controller.signal, cache: "no-store" },
-        );
+        const response = await fetch(`/api/reminders/${progress.id}/progress`, {
+          signal: controller.signal,
+          cache: "no-store",
+        });
         if (!response.ok || cancelled) return;
         setProgress((await response.json()) as ReminderProgress);
       } catch {
@@ -123,11 +126,18 @@ export function ProgressView({
     };
   }, [progress.id, progress.status]);
 
-  const processed = progress.delivered + progress.dmClosed + progress.failed;
-  const percent =
-    progress.targetCount > 0
-      ? Math.round((processed / progress.targetCount) * 100)
-      : 0;
+  // Both channels count toward "processed": a broadcast is finished when every
+  // DM row AND every sendable email row has an outcome. NO_ADDRESS email rows
+  // are settled from the start and are left out of both sides.
+  const viaDiscord =
+    !progress.channels || progress.channels.includes("DISCORD");
+  const email = progress.email ?? null;
+  const emailSendable = email ? email.total - email.no_address : 0;
+  const emailSettled = email ? emailSendable - email.pending : 0;
+  const dmProcessed = progress.delivered + progress.dmClosed + progress.failed;
+  const processed = (viaDiscord ? dmProcessed : 0) + emailSettled;
+  const toProcess = (viaDiscord ? progress.targetCount : 0) + emailSendable;
+  const percent = toProcess > 0 ? Math.round((processed / toProcess) * 100) : 0;
 
   const live = isLive(progress.status);
   const estimate = live
@@ -166,6 +176,7 @@ export function ProgressView({
       <CardHeader>
         <CardTitle className="flex flex-wrap items-center gap-2">
           Broadcast for {reminderPeriodLabel(progress)}
+          <Badge variant="outline">{channelsLabel(progress.channels)}</Badge>
           <Badge
             variant={
               progress.status === "FAILED"
@@ -206,8 +217,9 @@ export function ProgressView({
             aria-live="polite"
             className="text-muted-foreground text-sm"
           >
-            {processed.toLocaleString()} of{" "}
-            {progress.targetCount.toLocaleString()} processed ({percent}%).
+            {processed.toLocaleString()} of {toProcess.toLocaleString()}{" "}
+            {viaDiscord && email ? "DMs and emails" : email ? "emails" : ""}{" "}
+            processed ({percent}%).
             {progress.uniqueRecipients !== undefined &&
             progress.uniqueRecipients !== progress.targetCount ? (
               <>
@@ -231,38 +243,105 @@ export function ProgressView({
           </p>
         </div>
 
-        <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Count
-            label="Delivered"
-            value={progress.delivered}
-            color={CHART_COLORS.positive}
-            hint="The direct message was accepted by Discord."
-          />
-          <Count
-            label="DMs closed"
-            value={progress.dmClosed}
-            color={CHART_COLORS.caution}
-            hint="Not a failure. These members have DMs off and are mentioned in #daily-update-reminder once the queue drains."
-          />
-          <Count
-            label="Failed"
-            value={progress.failed}
-            color={CHART_COLORS.negative}
-            hint="Discord rejected the message for some reason other than closed DMs."
-          />
-          <Count
-            label={
-              progress.status === "CANCELLED" ? "Never attempted" : "Remaining"
-            }
-            value={progress.outstanding}
-            color={CHART_COLORS.neutral}
-            hint={
-              progress.status === "CANCELLED"
-                ? "The broadcast was stopped before reaching these members. They were never messaged — this is not a failure."
-                : "Still queued."
-            }
-          />
-        </dl>
+        {viaDiscord ? (
+          <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Count
+              label="DMs delivered"
+              value={progress.delivered}
+              color={CHART_COLORS.positive}
+              hint="The direct message was accepted by Discord."
+            />
+            <Count
+              label="DMs closed"
+              value={progress.dmClosed}
+              color={CHART_COLORS.caution}
+              hint="Not a failure. These members have DMs off and are mentioned in #daily-update-reminder once the queue drains."
+            />
+            <Count
+              label="Failed"
+              value={progress.failed}
+              color={CHART_COLORS.negative}
+              hint="Discord rejected the message for some reason other than closed DMs."
+            />
+            <Count
+              label={
+                progress.status === "CANCELLED"
+                  ? "Never attempted"
+                  : "Remaining"
+              }
+              value={progress.outstanding}
+              color={CHART_COLORS.neutral}
+              hint={
+                progress.status === "CANCELLED"
+                  ? "The broadcast was stopped before reaching these members. They were never messaged — this is not a failure."
+                  : "Still queued."
+              }
+            />
+          </dl>
+        ) : null}
+
+        {email ? (
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-medium">
+                Email
+                {email.openRate !== null ? (
+                  <span className="text-muted-foreground font-normal">
+                    {" "}
+                    · {Math.round(email.openRate * 100)}% of delivered opened
+                  </span>
+                ) : null}
+              </h2>
+              <Button variant="outline" size="sm" asChild>
+                <Link
+                  href={`/dashboard/reminders/emails?reminder=${progress.id}`}
+                >
+                  <Mail data-icon="inline-start" />
+                  Open the email log
+                </Link>
+              </Button>
+            </div>
+            <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              <Count
+                label="Delivered"
+                value={email.delivered}
+                color={CHART_COLORS.positive}
+                hint={EMAIL_STATE_DESCRIPTION.delivered}
+              />
+              <Count
+                label="Opened"
+                value={email.opened}
+                color={CHART_COLORS.positive}
+                hint="Estimated from a tracking pixel."
+              />
+              <Count
+                label="Not opened yet"
+                value={email.not_opened}
+                color={CHART_COLORS.neutral}
+                hint="Delivered, no open recorded."
+              />
+              <Count
+                label="Bounced or failed"
+                value={email.bounced + email.failed}
+                color={CHART_COLORS.negative}
+                hint="Refused by the receiving server or by Mailtrap."
+              />
+              <Count
+                label="Not registered"
+                value={email.no_address}
+                color={CHART_COLORS.caution}
+                hint="No email address on record, so no email was sent."
+              />
+            </dl>
+            {email.pending + email.awaiting > 0 ? (
+              <p className="text-muted-foreground text-xs">
+                {email.pending.toLocaleString()} still queued,{" "}
+                {email.awaiting.toLocaleString()} sent and awaiting a delivery
+                report from Mailtrap.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
 
         {/*
           The rule the broadcast ran under, not a recomputation of it: members

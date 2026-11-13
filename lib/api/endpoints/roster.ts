@@ -4,8 +4,6 @@ import { api, apiRequest } from "@/lib/api/client";
 import type {
   ApiResponse,
   RosterEntry,
-  RosterImportHistoryItem,
-  RosterImportResult,
   RosterQuery,
   RosterSettings,
   RosterStatusCountsPayload,
@@ -29,16 +27,6 @@ export function getRoster(
       page: query?.page ?? 1,
       limit: query?.limit ?? 50,
     },
-  });
-}
-
-/** `POST /api/roster/import` — Multipart spreadsheet upload (.xlsx or .csv). */
-export function importRoster(
-  formData: FormData,
-): Promise<RosterImportResult> {
-  return api<RosterImportResult>("/roster/import", {
-    method: "POST",
-    body: formData,
   });
 }
 
@@ -67,19 +55,6 @@ export function deactivateRosterEntry(id: string): Promise<RosterEntry> {
 export function restoreRosterEntry(id: string): Promise<RosterEntry> {
   return api<RosterEntry>(`/roster/${encodeURIComponent(id)}/restore`, {
     method: "PATCH",
-  });
-}
-
-/** `GET /api/roster/imports` — Paginated import audit history, most recent first. */
-export function getRosterImports(query?: {
-  page?: number;
-  limit?: number;
-}): Promise<ApiResponse<RosterImportHistoryItem[]>> {
-  return apiRequest<RosterImportHistoryItem[]>("/roster/imports", {
-    query: {
-      page: query?.page ?? 1,
-      limit: query?.limit ?? 20,
-    },
   });
 }
 

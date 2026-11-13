@@ -38,9 +38,7 @@ export default async function StatusPage({
       <div className="flex flex-col gap-1">
         <h1 className="text-xl font-semibold tracking-tight">Daily analytics</h1>
         <p className="text-muted-foreground text-sm">
-          Completion figures and trends across every configured server
-          (Asia/Dhaka). Figures count people, so someone in two servers counts
-          once.
+          Completion figures and trends.
         </p>
       </div>
 

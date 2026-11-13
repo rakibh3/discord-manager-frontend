@@ -38,7 +38,9 @@ const Toaster = ({ ...props }: ToasterProps) => {
       }
       toastOptions={{
         classNames: {
-          toast: "cn-toast",
+          // Sonner ships its own 1px border and soft shadow; force the
+          // Brutalist frame (2px outline + hard offset shadow) over them.
+          toast: "cn-toast border-2! border-foreground! shadow-md!",
         },
       }}
       {...props}

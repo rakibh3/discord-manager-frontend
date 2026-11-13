@@ -35,8 +35,7 @@ export function RegistrationView({
         <div className="flex flex-col gap-1">
           <h1 className="text-xl font-semibold tracking-tight">Registration</h1>
           <p className="text-muted-foreground text-sm">
-            Control when the public sign-up form accepts registrations, and
-            review who has registered.
+            When the sign-up form is open, and who has registered.
           </p>
         </div>
 

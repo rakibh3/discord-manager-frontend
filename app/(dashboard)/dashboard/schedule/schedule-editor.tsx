@@ -130,15 +130,12 @@ export function ScheduleEditor({
               {formatWallClock(stored.openTime)}
             </p>
             <FieldDescription>
-              The channel opens the moment the announcement is posted, so this
-              mirrors the announce time and cannot be changed here.{" "}
               <Link
                 href="/dashboard/announcement"
                 className="underline underline-offset-4"
               >
-                Change it on the announcement screen
+                Change it on the Announcement page
               </Link>
-              .
             </FieldDescription>
           </Field>
 
@@ -155,18 +152,13 @@ export function ScheduleEditor({
               }}
             />
             <FieldDescription>
-              Asia/Dhaka, 24-hour. Must be later than{" "}
-              {formatWallClock(stored.openTime)} - to lock earlier than that, move
-              the announcement first.
+              Must be after {formatWallClock(stored.openTime)}.
             </FieldDescription>
           </Field>
         </div>
 
         <FieldSet>
           <FieldLegend variant="label">Active days</FieldLegend>
-          <FieldDescription>
-            The channel opens and locks only on the days selected here.
-          </FieldDescription>
           <FieldGroup className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {WEEKDAYS.map((weekday) => {
               const checkboxId = `weekday-${weekday.value}`;
@@ -202,8 +194,7 @@ export function ScheduleEditor({
           </FieldLabel>
         </Field>
         <FieldDescription>
-          Turning this off unregisters the timed jobs. Manual open and lock keep
-          working.
+          Off pauses the timer. Manual open and lock still work.
         </FieldDescription>
 
         <Field orientation="horizontal">

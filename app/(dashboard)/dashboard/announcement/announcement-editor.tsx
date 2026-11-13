@@ -187,18 +187,14 @@ export function AnnouncementEditor({
               aria-describedby={`${bodyId}-hint`}
             />
             <FieldDescription id={`${bodyId}-hint`}>
-              The stored template, with placeholders left unexpanded. Typing a
-              literal <code className="font-mono">@everyone</code> here does
-              nothing — mentions come only from the allowlist below.
+              Mentions typed here don&rsquo;t ping — use Mentions below.
             </FieldDescription>
           </Field>
 
           <Field>
             <FieldLabel>Placeholders</FieldLabel>
             <FieldDescription>
-              Click to insert at the cursor. Any other{" "}
-              <code className="font-mono">{"{{token}}"}</code> is rejected on
-              save — it would reach every student as literal characters.
+              Click to insert at the cursor.
             </FieldDescription>
             <div className="flex flex-wrap gap-2">
               {payload.supportedPlaceholders.map((token) => (
@@ -235,17 +231,14 @@ export function AnnouncementEditor({
               }
             />
             <FieldDescription>
-              Fills <code className="font-mono">{"{{termination_day}}"}</code>{" "}
-              — how many consecutive missed days means removal from the process.
+              Consecutive missed days before removal.
             </FieldDescription>
           </Field>
 
           <FieldSet>
             <FieldLegend variant="label">Mentions</FieldLegend>
             <FieldDescription>
-              The only source of pings. Mention text typed into the body is
-              inert, and an entry that no longer resolves at post time is
-              dropped from that post rather than blocking it.
+              Who gets pinged by each post.
             </FieldDescription>
 
             <FieldGroup>
@@ -262,9 +255,7 @@ export function AnnouncementEditor({
                   }
                 />
                 <FieldDescription>
-                  One per line, or separated by spaces or commas. 17–20 digit
-                  snowflakes from &ldquo;Copy ID&rdquo; in Discord. Leave empty
-                  to ping no roles.
+                  One per line. Use &ldquo;Copy ID&rdquo; in Discord.
                 </FieldDescription>
               </Field>
 
@@ -284,9 +275,7 @@ export function AnnouncementEditor({
                   }
                 />
                 <FieldDescription>
-                  Handles, not display names. A leading{" "}
-                  <code className="font-mono">@</code> and any capitals are
-                  normalized away.
+                  Usernames, one per line.
                 </FieldDescription>
               </Field>
 
@@ -303,8 +292,7 @@ export function AnnouncementEditor({
                 </FieldLabel>
               </Field>
               <FieldDescription>
-                Notifies every member of the server, every evening, until turned
-                off. This switch is the only thing that can do that.
+                Pings everyone in the server, every evening.
               </FieldDescription>
             </FieldGroup>
           </FieldSet>
@@ -312,8 +300,7 @@ export function AnnouncementEditor({
           <FieldSet>
             <FieldLegend variant="label">Schedule</FieldLegend>
             <FieldDescription>
-              When the message posts. Unlike the channel schedule there is no
-              catch-up — a missed announcement is never posted late.
+              A missed post is never sent late.
             </FieldDescription>
 
             <FieldGroup>
@@ -331,20 +318,16 @@ export function AnnouncementEditor({
                   }
                 />
                 <FieldDescription id={timeHintId}>
-                  Asia/Dhaka, 24-hour. This is also when{" "}
-                  <code className="font-mono text-xs">#daily-update</code>{" "}
-                  opens — the channel opens as the message goes out, so changing
-                  this moves the submission window with it
-                  {channelWindow
-                    ? `, and it must stay earlier than the ${formatWallClock(channelWindow.closeTime)} lock time`
-                    : null}
-                  .{" "}
+                  Also opens{" "}
                   <Link
                     href="/dashboard/schedule"
                     className="underline underline-offset-4"
                   >
-                    See the channel schedule
+                    #daily-update
                   </Link>
+                  {channelWindow
+                    ? ` (locks at ${formatWallClock(channelWindow.closeTime)})`
+                    : null}
                   .
                 </FieldDescription>
               </Field>
@@ -401,8 +384,7 @@ export function AnnouncementEditor({
                 </FieldLabel>
               </Field>
               <FieldDescription>
-                Turning this off pauses the timed post and keeps the message and
-                the times. &ldquo;Send now&rdquo; still works.
+                Off pauses the timed post. &ldquo;Send now&rdquo; still works.
               </FieldDescription>
             </FieldGroup>
           </FieldSet>
@@ -588,9 +570,7 @@ function PreviewPane({ preview }: { preview: PreviewState }) {
       </FieldLabel>
 
       <FieldDescription>
-        Rendered by the same code the timed post uses, so this is exactly what
-        students read. The count is on the rendered message including the
-        mention line — not on the body above.
+        Exactly what students will see.
       </FieldDescription>
 
       {error ? (
@@ -608,21 +588,14 @@ function PreviewPane({ preview }: { preview: PreviewState }) {
           />
 
           <FieldDescription>
-            <code className="font-mono">{"{{close_time}}"}</code> resolved to{" "}
-            <strong>{data.closeTime}</strong>, read from the #daily-update
-            schedule — change it there, not here.
             {data.mentions.unresolved.length > 0 ? (
               <>
-                {" "}
-                Mention targets that no longer resolve and would be dropped:{" "}
+                Will be skipped (no longer found):{" "}
                 {data.mentions.unresolved.map(describeUnresolved).join("; ")}.
               </>
-            ) : null}
-          </FieldDescription>
-
-          <FieldDescription>
-            The mention line shown is built from the <strong>saved</strong>{" "}
-            allowlist. Unsaved mention changes appear here only after saving.
+            ) : (
+              "Mentions update here after you save."
+            )}
           </FieldDescription>
         </>
       ) : null}

@@ -119,7 +119,9 @@ export async function RosterStatusTable({
       if (value === undefined) params.delete(key);
       else params.set(key, value);
     }
-    return `/dashboard/roster/status?${params.toString()}`;
+    // This view lives on the Member status page; `view` keeps it selected.
+    params.set("view", "enrolled");
+    return `/dashboard/members?${params.toString()}`;
   };
 
   const sortDirection = (column: RosterStatusSortBy): "asc" | "desc" =>

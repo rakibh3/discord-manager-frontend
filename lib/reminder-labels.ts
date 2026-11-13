@@ -1,6 +1,10 @@
 import type {
+  EmailLogState,
+  EmailRowState,
+  ReminderChannel,
   ReminderCriterion,
   ReminderDeliveryStatus,
+  ReminderEmailEventType,
   ReminderStatus,
 } from "@/lib/api/types";
 import { formatCivilDate } from "@/lib/dhaka-date";
@@ -87,10 +91,9 @@ export const CRITERION_LABEL: Record<ReminderCriterion, string> = {
 };
 
 export const CRITERION_DESCRIPTION: Record<ReminderCriterion, string> = {
-  MISSING_UPDATE:
-    "Targets anyone with no daily update on a counted day, whatever their attendance says. This is the default because it is exactly what a broadcast meant before ranges existed — and the daily-update channel is what reminders exist to drive.",
+  MISSING_UPDATE: "Anyone without a daily update, whatever their attendance.",
   MISSING_BOTH:
-    "Targets only people who filed neither attendance nor an update on a counted day. Narrower: a student who submits attendance and never posts an update is not reminded.",
+    "Only people with neither attendance nor an update. Narrower.",
 };
 
 /** Every broadcast records a period rather than a single date; a single-date
@@ -126,3 +129,85 @@ export function reminderPeriodShort(period: {
   }
   return reminderPeriodLabel(period);
 }
+
+// ── Reminder email channel ───────────────────────────────────────────────────
+
+export const CHANNEL_LABEL: Record<ReminderChannel, string> = {
+  DISCORD: "Discord",
+  EMAIL: "Email",
+};
+
+/** "Discord + Email", in a stable order. Rows written before email existed have
+ *  no `channels`, which means Discord only. */
+export function channelsLabel(channels: ReminderChannel[] | undefined): string {
+  const list: ReminderChannel[] = channels?.length ? channels : ["DISCORD"];
+  return (["DISCORD", "EMAIL"] as const)
+    .filter((channel) => list.includes(channel))
+    .map((channel) => CHANNEL_LABEL[channel])
+    .join(" + ");
+}
+
+/** The chips on the email log, in the order they read best. `delivered` is a
+ *  SUPERSET of `opened` + `not_opened`, so it comes first. */
+export const EMAIL_LOG_STATES: EmailLogState[] = [
+  "delivered",
+  "opened",
+  "not_opened",
+  "awaiting",
+  "bounced",
+  "failed",
+  "pending",
+  "no_address",
+];
+
+export const EMAIL_STATE_LABEL: Record<EmailLogState, string> = {
+  delivered: "Delivered",
+  opened: "Opened",
+  not_opened: "Not opened yet",
+  awaiting: "Awaiting delivery",
+  bounced: "Bounced",
+  failed: "Failed to send",
+  pending: "Queued",
+  no_address: "Not registered",
+};
+
+export const EMAIL_STATE_DESCRIPTION: Record<EmailLogState, string> = {
+  delivered:
+    "Reached the student's mail server — includes everyone who opened it.",
+  opened:
+    "An open was recorded. Estimated from a tracking pixel: Apple Mail can open automatically.",
+  not_opened:
+    "Delivered, but no open recorded. Clients that block images never report an open, so this is not proof it was unread.",
+  awaiting:
+    "Mailtrap accepted it; no delivery report has arrived yet.",
+  bounced: "The receiving server refused it — the address may be wrong.",
+  failed: "Mailtrap refused to send it. The error says why.",
+  pending: "Waiting in the queue to be sent.",
+  no_address:
+    "Never registered, so there is no email address. Reached on Discord only, if Discord was a channel.",
+};
+
+export const EMAIL_STATE_VARIANT: Record<
+  EmailRowState,
+  "success" | "secondary" | "warning" | "destructive" | "outline"
+> = {
+  opened: "success",
+  not_opened: "secondary",
+  awaiting: "outline",
+  bounced: "destructive",
+  failed: "destructive",
+  pending: "outline",
+  no_address: "warning",
+};
+
+export const EMAIL_EVENT_LABEL: Record<ReminderEmailEventType, string> = {
+  DELIVERY: "Delivered",
+  OPEN: "Opened",
+  CLICK: "Link clicked",
+  SOFT_BOUNCE: "Temporary bounce (Mailtrap retries)",
+  BOUNCE: "Bounced",
+  REJECT: "Rejected",
+  SUSPENSION: "Suspended",
+  SPAM: "Marked as spam",
+  UNSUBSCRIBE: "Unsubscribed",
+};

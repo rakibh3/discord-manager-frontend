@@ -8,8 +8,7 @@ import { cn } from "@/lib/utils";
 
 /**
  * The grouped navigation list, shared by the desktop sidebar and the
- * mobile dialog. Each item renders its label plus a one-line description
- * so the sections are self-explanatory on first sight.
+ * mobile dialog. One line per item; the item's description is its tooltip.
  */
 export function NavGroupList() {
   const pathname = usePathname();
@@ -32,28 +31,20 @@ export function NavGroupList() {
                     href={item.href}
                     // Marks the section for assistive technology, not just visually.
                     aria-current={active ? "page" : undefined}
+                    // The description is a hover hint, not a second line: eleven
+                    // links with a sub-line each is ~30 lines of grey text to
+                    // read on every page just to navigate.
+                    title={item.description}
                     className={cn(
-                      "flex min-h-11 items-start gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                      "flex min-h-10 items-center gap-3 rounded-xl px-3 text-sm font-semibold transition-transform active:translate-x-[1px] active:translate-y-[1px]",
                       "focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2",
                       active
-                        ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                        : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                        ? "border-2 border-foreground bg-accent text-accent-foreground shadow-2xs"
+                        : "border-2 border-transparent text-foreground/80 hover:border-foreground/30 hover:bg-muted/70 hover:text-foreground",
                     )}
                   >
-                    <item.icon aria-hidden className="mt-0.5 size-4 shrink-0" />
-                    <span className="flex min-w-0 flex-col">
-                      <span className="leading-5">{item.label}</span>
-                      <span
-                        className={cn(
-                          "text-xs font-normal leading-snug",
-                          active
-                            ? "text-sidebar-accent-foreground/75"
-                            : "text-muted-foreground/80",
-                        )}
-                      >
-                        {item.description}
-                      </span>
-                    </span>
+                    <item.icon aria-hidden className="size-4 shrink-0" />
+                    <span className="truncate">{item.label}</span>
                   </Link>
                 </li>
               );
