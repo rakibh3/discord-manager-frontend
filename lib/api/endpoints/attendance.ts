@@ -6,11 +6,13 @@ import type {
   AttendanceWindow,
   SubmitAttendancePayload,
   VerifyEmailPayload,
+  VerifyPairPayload,
   VerifyUserPayload,
 } from "@/lib/api/types";
 
 /** Public attendance endpoints (`API_INTEGRATION.md` §8.6). No `Authorization`
- *  header; rate limited per IP — submit 5 req/15min, the three reads 60 req/min. */
+ *  header; rate limited per IP — submit is budgeted per 15 min, the three
+ *  reads 60 req/min. */
 
 /** `GET /api/attendance/window` — the public submission window, derived from the
  *  stored schedule and the current Asia/Dhaka clock. The response carries
@@ -66,17 +68,41 @@ export function verifyEmail(email: string): Promise<VerifyEmailPayload> {
   });
 }
 
+/** `GET /api/attendance/verify-pair?email=...&username=...` — the pre-submit
+ *  email↔handle pairing check the form's submit button gates on. Answers 200
+ *  either way; branch on `data.verified`.
+ *
+ *  READ-ONLY by contract — it writes nothing, so it is safe to call on a
+ *  settled input. `data.conflict` says a pairing
+ *  disagreement was detected without naming the paired side (the paired
+ *  account and email belong to another student, and this route is
+ *  reachable without a token).
+ *
+ *  A malformed email or username is a 400 (Zod), distinct from a pair that
+ *  simply does not agree. */
+export function verifyPair(
+  email: string,
+  username: string,
+): Promise<VerifyPairPayload> {
+  return api<VerifyPairPayload>("/attendance/verify-pair", {
+    anonymous: true,
+    cache: "no-store",
+    query: { email, username },
+  });
+}
+
 /** `POST /api/attendance/submit` — the body carries only `email` and
- *  `discordUsername` (plus the optional mismatch flag); `name` and `phone`
- *  are sourced server-side from the matched roster entry.
+ *  `discordUsername`; `name` and `phone` are sourced server-side from the
+ *  matched roster entry.
  *
  *  Outcomes:
- *  - **201** → attendance recorded. `data.attendanceRecorded` is `true`.
- *  - **202** → attendance NOT recorded; mismatch report queued. `data.attendanceRecorded`
- *    is `false` and `data.reportQueued` is `true`. The form renders a different
- *    card on this branch — a "Recorded" message would be a lie.
- *  - **403** → email not on the roster (gate armed), OR the Discord handle
- *    does not match the pairing. The two are decided by the message text.
+ *  - **201** → attendance recorded. `data.attendanceRecorded` is `true` —
+ *    always, on every accepted submission.
+ *  - **403** → email not on the roster (gate armed), OR the email↔handle
+ *    pairing disagrees. The two are decided by the message text. The form
+ *    should never hit the pairing branch in normal use: the submit button
+ *    is gated (and disabled) on `/verify-pair`, so the pairing branch only
+ *    fires for a client that bypassed the disabled button.
  *  - **404** → the handle is not a member of any configured server.
  *  - **409** → already submitted today. Read as a success-adjacent outcome.
  */

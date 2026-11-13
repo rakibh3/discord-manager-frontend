@@ -39,15 +39,6 @@ export function isHandleVerified(badge: HandleBadge): boolean {
   return badge.kind === "verified";
 }
 
-/** Servers this handle belongs to that still have no row for today.
- *
- *  ⚠️ The top-level `alreadySubmitted` is true only when **every** server has
- *  today's row, so a student in two servers who submitted through one is *not*
- *  done — telling them otherwise would leave the other server short. */
-function pendingServers(payload: VerifyUserPayload) {
-  return (payload.servers ?? []).filter((server) => !server.alreadySubmitted);
-}
-
 /** Live Discord username verification, called browser-direct to avoid doubling
  *  the latency. Answers 200 either way.
  *
@@ -57,15 +48,16 @@ function pendingServers(payload: VerifyUserPayload) {
  *
  *  **No email is forwarded to `/verify-user` from this field.** Pairing
  *  conflicts (a Discord username already paired to a *different* email, or
- *  vice versa) are only checked at submit time, where the 403 handle-mismatch
- *  branch opens a consent modal. Forwarding the email on every keystroke
- *  would fire the pairing-mismatch report as a side effect of every verify
- *  call, which is exactly the silent-report bug the form was meant to fix.
+ *  vice versa) are checked by the form's own debounced `/verify-pair` call
+ *  once both field badges are green — and by the submit path, server-side.
+ *  Keeping the email out of this request keeps the two questions separate:
+ *  this badge answers "is this handle in a server?", the pair check answers
+ *  "do this email and this handle belong together?".
  *  The duplicate check on the live badge is therefore handle-only —
  *  `alreadySubmitted: true` for any handle that already submitted today,
- *  even one belonging to a different student. The pairing check on submit
- *  narrows the same scenario down to "is this submission mine?" and refuses
- *  it via 403 if not. */
+ *  even one belonging to a different student. The pairing check narrows the
+ *  same scenario down to "is this submission mine?" before the submit
+ *  button unlocks. */
 export function DiscordHandleField({
   value,
   onChange,
@@ -83,8 +75,8 @@ export function DiscordHandleField({
    *  "not a member", "still checking", and "already submitted" — the
    *  already-submitted case is also surfaced via `onAlreadySubmittedChange` so
    *  the form can disable the button with a precise message instead of a
-   *  generic one. Pairing conflicts are NOT surfaced here — submit handles
-   *  them via the 403 handle-mismatch modal. */
+   *  generic one. Pairing conflicts are NOT surfaced here — the form runs
+   *  them through its own debounced `/verify-pair` call. */
   onVerifiedChange?: (verified: boolean) => void;
   /** Reports whether the handle is the *already submitted for today* kind
    *  specifically. The form uses this to disable the submit button — a second
@@ -139,11 +131,9 @@ export function DiscordHandleField({
       // out-of-order response for an older handle is simply never displayed.
       const settle = (next: HandleBadge) => setRemote({ handle, badge: next });
 
-      // Handle-only lookup — no email is forwarded here. Forwarding the
-      // typed email would make every keystroke fire the pairing-mismatch
-      // report as a side effect, which is the bug the form is meant to
-      // avoid. Pairing is checked once on submit, via the 403
-      // handle-mismatch modal.
+      // Handle-only lookup — no email is forwarded here. The pairing check
+      // runs as its own debounced `/verify-pair` call in the form, once
+      // both field badges are green.
       try {
         const response = await fetch(
           `${API_BASE}/attendance/verify-user?username=${encodeURIComponent(handle)}`,
@@ -299,7 +289,7 @@ export function DiscordHandleField({
           <>
             <CircleAlert aria-hidden className="text-destructive mt-0.5 size-4 shrink-0" />
             <span className="text-destructive">
-              This Discord username was not found in our Discord servers. Check
+              This Discord username was not found in our Discord server. Check
               the spelling, or join the server first.
             </span>
           </>
@@ -330,23 +320,6 @@ export function DiscordHandleField({
                 ✅ {member.displayName ?? member.discordUsername} - found in
                 server.
               </span>
-              {/*
-                Only when it changes what the student has to do. A single server
-                is the normal case and needs no explanation; two servers with one
-                already submitted is the case where a plain "already submitted"
-                would be wrong.
-              */}
-              {(badge.payload.servers?.length ?? 0) > 1 ? (
-                <span className="text-muted-foreground">
-                  You are in {badge.payload.servers?.length} servers. One
-                  submission records attendance for all of them
-                  {pendingServers(badge.payload).length <
-                    (badge.payload.servers?.length ?? 0)
-                    ? ` (${pendingServers(badge.payload).length} still pending)`
-                    : ""}
-                  .
-                </span>
-              ) : null}
             </span>
           </span>
         ) : null}
@@ -368,9 +341,8 @@ export function DiscordHandleField({
       {/*
         The "where to find your username" help is only useful *before* the
         handle is verified — once the badge says ✅, the student has already
-        entered a valid handle. Pairing mismatches are detected only on
-        submit (via the 403 modal); the live badge does not carry that
-        signal.
+        entered a valid handle. Pairing mismatches are surfaced by the
+        form's `/verify-pair` check, not by this field's badge.
       */}
       {badge.kind === "verified" || badge.kind === "duplicate" ? null : (
         <details id={guidanceId} className="text-muted-foreground/90 group">

@@ -5,7 +5,7 @@ import { ScheduleView } from "./schedule-view";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getSchedule } from "@/lib/api/endpoints/schedule";
 
-export const metadata: Metadata = { title: "Schedule" };
+export const metadata: Metadata = { title: "Daily update schedule" };
 
 async function Schedule() {
   // Uncached by design: `channel.isOpen` costs a live Discord read, and a stale

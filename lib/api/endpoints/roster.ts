@@ -42,7 +42,10 @@ export function importRoster(
   });
 }
 
-/** `PATCH /api/roster/:id` — Update one entry's name, email, or phone. */
+/** `PATCH /api/roster/:id` — Update one entry's name, email, phone, or paired
+ *  Discord username. A `discordUsername` must belong to a current server
+ *  member (422 otherwise) and not be paired with another entry (409); `null`
+ *  clears the pairing. */
 export function updateRosterEntry(
   id: string,
   input: UpdateRosterEntryInput,

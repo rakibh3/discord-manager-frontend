@@ -19,7 +19,7 @@ import { aggregateSyncState } from "@/lib/api/derive";
 import { getSyncStatus } from "@/lib/api/endpoints/discord";
 import { formatDhaka, formatDuration } from "@/lib/dhaka-date";
 
-export const metadata: Metadata = { title: "Discord" };
+export const metadata: Metadata = { title: "Discord servers" };
 
 function Stat({
   label,
@@ -186,7 +186,7 @@ export default function DiscordPage() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold tracking-tight">Discord</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Discord servers</h1>
         <p className="text-muted-foreground text-sm">
           Bot health and the member directory that every other feature reads
           from, per configured server.

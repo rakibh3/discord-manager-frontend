@@ -22,6 +22,7 @@ const {
   getAttendanceWindow,
   verifyDiscordUsername,
   verifyEmail,
+  verifyPair,
   submitAttendance,
 } = await import("@/lib/api/endpoints/attendance");
 
@@ -121,7 +122,7 @@ describe("attendance public endpoints", () => {
     expect(calls[0].authorization).toBeNull();
   });
 
-  test("submitAttendance posts only email + handle (no name/phone)", async () => {
+  test("submitAttendance posts only email + handle (no name/phone, no flag)", async () => {
     const mockSubmitResult = {
       attendanceDate: "2026-08-18",
       submittedAt: "2026-08-18T14:00:00.000Z",
@@ -133,7 +134,6 @@ describe("attendance public endpoints", () => {
         avatarUrl: null,
       },
       attendanceRecorded: true,
-      reportQueued: false,
     };
 
     install(() => json(201, { success: true, statusCode: 201, data: mockSubmitResult }));
@@ -204,36 +204,24 @@ describe("attendance public endpoints", () => {
     expect(calls[0].url).toBe("http://backend.test/api/attendance/verify-user?username=rakib_dev");
   });
 
-  test("submitAttendance forwards the mismatch flag when set", async () => {
-    const mockSubmitResult = {
+  test("verifyPair calls /attendance/verify-pair anonymously with both fields", async () => {
+    const mockPair = {
+      verified: false,
+      conflict: true,
+      handleIsMember: true,
+      emailOnRoster: true,
       attendanceDate: "2026-08-18",
-      submittedAt: "2026-08-18T14:00:00.000Z",
-      member: {
-        id: "m1",
-        discordUserId: "u1",
-        discordUsername: "rakib_alt",
-        displayName: "Rakib",
-        avatarUrl: null,
-      },
-      attendanceRecorded: false,
-      reportQueued: true,
+      emailVerificationRequired: true,
     };
 
-    install(() => json(202, { success: true, statusCode: 202, data: mockSubmitResult }));
+    install(() => json(200, { success: true, statusCode: 200, data: mockPair }));
 
-    const res = await submitAttendance({
-      email: "rakib@example.com",
-      discordUsername: "rakib_alt",
-      cannotEnterRealDiscordUsername: true,
-    });
+    const res = await verifyPair("rakib@example.com", "rakib_alt");
 
-    expect(res).toEqual(mockSubmitResult);
-    expect(res.attendanceRecorded).toBe(false);
-    expect(res.reportQueued).toBe(true);
-    expect(JSON.parse(calls[0].body!)).toEqual({
-      email: "rakib@example.com",
-      discordUsername: "rakib_alt",
-      cannotEnterRealDiscordUsername: true,
-    });
+    expect(res).toEqual(mockPair);
+    expect(calls[0].url).toBe(
+      "http://backend.test/api/attendance/verify-pair?email=rakib%40example.com&username=rakib_alt",
+    );
+    expect(calls[0].authorization).toBeNull();
   });
 });

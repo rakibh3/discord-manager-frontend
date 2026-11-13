@@ -59,9 +59,10 @@ describe("normalizeDiscordUsername", () => {
 });
 
 describe("attendance schema", () => {
-  // The submit body carries ONLY `email` and `discordUsername` (plus the
-  // optional mismatch flag). `name` and `phone` are no longer collected —
-  // they are sourced server-side from the matched active roster entry.
+  // The submit body carries ONLY `email` and `discordUsername`. `name` and
+  // `phone` are not collected — they are sourced server-side from the
+  // matched active roster entry. Whether the two belong together is not a
+  // schema rule: the form gates on the pre-submit `/verify-pair` check.
   test("accepts a valid email + handle pair", () => {
     const result = attendanceSchema.safeParse({
       email: "rakib@example.com",
@@ -108,13 +109,21 @@ describe("attendance schema", () => {
     expect(fields).toEqual(new Set(["email", "discordUsername"]));
   });
 
-  test("the optional mismatch flag is preserved when present", () => {
+  test("drops an unknown key instead of submitting it", () => {
+    // A form cached from before `cannotEnterRealDiscordUsername` was removed
+    // must not ship the key:
+    // the backend's `.strict()` submit schema refuses extra keys with a 400.
+    // The schema strips it here, so the parsed body is always exactly the
+    // two fields the endpoint accepts.
     const result = attendanceSchema.safeParse({
       email: "rakib@example.com",
       discordUsername: "rakib_dev",
       cannotEnterRealDiscordUsername: true,
     });
     expect(result.success).toBe(true);
-    expect(result.data?.cannotEnterRealDiscordUsername).toBe(true);
+    expect(result.data).toEqual({
+      email: "rakib@example.com",
+      discordUsername: "rakib_dev",
+    });
   });
 });

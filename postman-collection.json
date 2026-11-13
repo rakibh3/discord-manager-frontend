@@ -35,7 +35,7 @@
       "key": "pairingThiefEmail",
       "value": "",
       "type": "string",
-      "description": "A SECOND enrolled email address. Used by 'Submit Attendance - Handle Bound to Different Email (202)' to demonstrate that submitting a handle already paired to {{attendanceEmail}} under a different enrolled address triggers an auto-filed pairing mismatch report."
+      "description": "A SECOND enrolled email address. Used by 'Submit Attendance - Handle Bound to Different Email (403)' to demonstrate that submitting a handle already paired to {{attendanceEmail}} under a different enrolled address is refused as a hard 403."
     },
     {
       "key": "reminderDate",
@@ -74,10 +74,16 @@
       "description": "A roster entry id, copied from GET /roster."
     },
     {
-      "key": "mismatchReportId",
+      "key": "registrationEmail",
       "value": "",
       "type": "string",
-      "description": "A discord pairing mismatch report id, copied from GET /roster/discord-mismatch-reports."
+      "description": "Email address to register with Submit Registration. Each address can register once; a second submit answers 409."
+    },
+    {
+      "key": "registrationId",
+      "value": "",
+      "type": "string",
+      "description": "A registration id, saved automatically by List Registrations."
     }
   ],
   "event": [
@@ -685,7 +691,7 @@
           "request": {
             "method": "PATCH",
             "url": "{{baseUrl}}/roster/{{rosterEntryId}}",
-            "description": "Requires admin auth. Correct one entry's name, email, or phone. At least one field is required - an empty patch is a 400 rather than a 200 reporting a save that changed nothing.\n\nThe email is normalized (trimmed and lowercased) before storage. Changing it to an address another entry already holds is a 409, never a silent merge of two people.\n\n`phone: null` clears the number; omitting the key leaves it alone.",
+            "description": "Requires admin auth. Correct one entry's name, email, phone, or paired Discord username. At least one field is required - an empty patch is a 400 rather than a 200 reporting a save that changed nothing.\n\nThe email is normalized (trimmed and lowercased) before storage. Changing it to an address another entry already holds is a 409, never a silent merge of two people.\n\n`phone: null` clears the number; omitting the key leaves it alone.\n\n`discordUsername` edits the pairing - the Discord account the attendance form accepts together with this email. A username pairs the entry with the server member who currently holds it (422 when nobody in the server does, 409 when another roster entry already holds that account); `null` clears the pairing so the student's next accepted submission claims a fresh one; omitting the key leaves it alone. This is how an admin unblocks a student the form refuses with 'do not match our records'.\n\nThe response (like the listing) carries `discordUserId`, `linkedAt` and `discordUsername`, the paired account's current username.",
             "header": [
               {
                 "key": "Content-Type",
@@ -694,7 +700,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"name\": \"Rakibul Hasan\",\n  \"phone\": \"01711000000\"\n}",
+              "raw": "{\n  \"name\": \"Rakibul Hasan\",\n  \"phone\": \"01711000000\",\n  \"discordUsername\": \"{{attendanceUsername}}\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1016,60 +1022,49 @@
             },
             "description": "Requires admin auth. Streams a CSV of the same rows as the listing, paginated through 500-row batches. `format=xlsx` is refused with 501 (the same response the daily-status export uses, naming `csv` as the supported format)."
           }
-        },
+        }
+      ]
+    },
+    {
+      "name": "Registration",
+      "description": "The public registration form and its admin surface.\n\nTWO base paths, on purpose: `/registration/*` (singular) is PUBLIC - window and submit, no auth - and `/registrations/*` (plural) is ADMIN-only and lists every registrant's name, email and phone.\n\nUnlike the attendance routes there is no Discord-membership check standing in for a credential: a registrant has not joined a server yet. What bounds the public submit is the window (CLOSED by default), the unique email, and a per-IP rate limit of 10 requests per 15 minutes - the one limiter currently applied anywhere in the API.\n\nSet {{registrationEmail}} before running Submit. List Registrations saves the first id into {{registrationId}} for Resend Welcome Email.",
+      "item": [
         {
-          "name": "List Discord Pairing Mismatch Reports",
+          "name": "Get Registration Window",
           "request": {
             "method": "GET",
-            "url": {
-              "raw": "{{baseUrl}}/roster/discord-mismatch-reports?status=open&page=1&limit=50",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "roster",
-                "discord-mismatch-reports"
-              ],
-              "query": [
-                {
-                  "key": "status",
-                  "value": "open",
-                  "description": "open (default), reassigned, or dismissed. Omitting it lands on the actionable queue."
-                },
-                {
-                  "key": "search",
-                  "value": "",
-                  "description": "Substring match against the entry's name OR email (case-insensitive)."
-                },
-                {
-                  "key": "dateFrom",
-                  "value": "2026-08-01T00:00:00.000Z",
-                  "description": "ISO 8601 datetime; inclusive lower bound of the report time range."
-                },
-                {
-                  "key": "dateTo",
-                  "value": "2026-08-20T23:59:59.000Z",
-                  "description": "ISO 8601 datetime; inclusive upper bound of the report time range."
-                },
-                {
-                  "key": "page",
-                  "value": "1"
-                },
-                {
-                  "key": "limit",
-                  "value": "50",
-                  "description": "1-200; default 50."
-                }
-              ]
-            },
-            "description": "Requires admin auth. Reports of attendance submissions whose submitted handle did not match the recorded Discord pairing for the same email. One row per open report (or per the status filter), joined to the enrolled entry and the paired / submitting account handles.\n\nReports are produced when a paired student submits attendance with a different handle AND ticks the `cannotEnterRealDiscordUsername` flag on the attendance form. The first write of the day is recorded; subsequent mismatched submissions on the same day are absorbed by the partial unique index and do not create duplicate rows.\n\nThe listing deliberately rejects `pairedAccountId` and `submittingAccountId` filters (400) — combining them would let a caller enumerate Discord account snowflakes. Filter by status, search, and date range only.\n\nOrdering is `reportedAt DESC` so the dashboard's first page is the most recent activity."
-          }
+            "url": "{{baseUrl}}/registration/window",
+            "description": "PUBLIC - no auth. Returns `isOpen`, `state` (disabled | not-yet-open | open | closed), `opensAt`, `closesAt` and `timezone`, and nothing else: not the invite link, not the switches, not who edited the settings.\n\n`state: disabled` is the default on a fresh deployment. A null `opensAt` means the form opens as soon as it is enabled; a null `closesAt` means it stays open until it is disabled."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const jsonData = pm.response.json();",
+                  "",
+                  "pm.test('Window retrieved', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(jsonData.data).to.have.property('isOpen');",
+                  "    pm.expect(jsonData.data).to.have.property('state');",
+                  "});",
+                  "",
+                  "pm.test('Nothing but the window crosses onto the public route', function () {",
+                  "    pm.expect(jsonData.data).to.not.have.property('discordInviteUrl');",
+                  "    pm.expect(jsonData.data).to.not.have.property('updatedBy');",
+                  "});"
+                ]
+              }
+            }
+          ]
         },
         {
-          "name": "Act on Discord Pairing Mismatch Report",
+          "name": "Submit Registration",
           "request": {
             "method": "POST",
-            "url": "{{baseUrl}}/roster/discord-mismatch-reports/{{mismatchReportId}}/action",
+            "url": "{{baseUrl}}/registration/submit",
+            "description": "PUBLIC - no auth. Exactly four keys; any other key is a 400 naming it.\n\n- email is trimmed and lowercased (the same normalizer the roster uses)\n- phone must be a Bangladeshi mobile and is stored as 01XXXXXXXXX (`+880 1712-345678` is accepted)\n- discordUsername follows the attendance form's rule, and is NOT checked against the member directory - it is an unverified claim\n\n201 on success. 403 when the window is not open (re-checked on every submit). 409 when the email is already registered. 429 once the per-IP budget (10 per 15 minutes, every request counted) is used up.\n\nWith auto-add on, the registration is also written onto the enrolment roster - CREATE-ONLY: an existing roster entry is never changed and a removed one is never reinstated.\n\nThe welcome email is queued after the registration commits and can never fail this request.",
             "header": [
               {
                 "key": "Content-Type",
@@ -1078,14 +1073,13 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"action\": \"reassign\"\n}",
+              "raw": "{\n  \"name\": \"Postman Test Registrant\",\n  \"email\": \"{{registrationEmail}}\",\n  \"phone\": \"01712345678\",\n  \"discordUsername\": \"postman_registrant\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            },
-            "description": "Requires admin auth. Closes an open mismatch report.\n\n`action` is `reassign` or `dismiss`. Anything else is a 400.\n\nREASSIGN rewrites the entry's pairing to the submitted account, but only if the entry still holds the original paired account — a single conditional write that preserves the invariant against a stale dashboard. The membership check runs first: reassigning to a Discord account that has left every configured server is refused with 422, because the entry would end up paired to nothing. The report and the pairing rewrite are in one transaction; either both happen or neither does.\n\nDISMISS closes the report and leaves the pairing untouched. No membership check; the recorded pairing is the administrator's decision that the existing record is correct.\n\nEither action on a closed report is refused with 409 and the current status. An unknown id is 404. The action writes an audit-log entry with the action, the report id, the reviewing admin, and the time."
+            }
           },
           "event": [
             {
@@ -1093,11 +1087,225 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Report closed', function () {",
+                  "const status = pm.response.code;",
+                  "",
+                  "pm.test('A documented outcome', function () {",
+                  "    pm.expect([201, 403, 409, 429]).to.include(status);",
+                  "});",
+                  "",
+                  "if (status === 201) {",
+                  "    pm.test('Echoes only what was typed', function () {",
+                  "        const data = pm.response.json().data;",
+                  "        pm.expect(data).to.have.property('email');",
+                  "        pm.expect(data).to.have.property('welcomeEmail');",
+                  "        pm.expect(data).to.not.have.property('id');",
+                  "    });",
+                  "}",
+                  "if (status === 403) console.warn('Registration is not open. Enable it with Update Registration Settings.');",
+                  "if (status === 409) console.warn('That email is already registered.');",
+                  "if (status === 429) console.warn('Per-IP budget used up: 10 requests per 15 minutes.');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get Registration Settings",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/registrations/settings",
+            "description": "Requires admin auth. The window, the switches, the invite link, the computed `window` state, the headline `counts`, and `mail` - whether the backend can send mail at all and exactly which variable is missing.\n\n`mail.sandbox: true` means every welcome email goes to a Mailtrap TEST INBOX and reaches no registrant, while still being recorded as SENT."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const jsonData = pm.response.json();",
+                  "",
+                  "pm.test('Settings retrieved', function () {",
                   "    pm.response.to.have.status(200);",
-                  "    const jsonData = pm.response.json();",
-                  "    pm.expect(jsonData.success).to.be.true;",
-                  "    pm.expect(['reassigned', 'dismissed']).to.include(jsonData.data.status);",
+                  "    pm.expect(jsonData.data).to.have.property('enabled');",
+                  "    pm.expect(jsonData.data).to.have.property('window');",
+                  "    pm.expect(jsonData.data).to.have.property('mail');",
+                  "});",
+                  "",
+                  "if (jsonData.data && jsonData.data.mail && !jsonData.data.mail.configured) {",
+                  "    console.warn(jsonData.data.mail.reason);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update Registration Settings",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/registrations/settings",
+            "description": "Requires admin auth. Every key optional, at least one required; unknown keys are a 400. `null` clears a date, a time, or the link.\n\nDates are YYYY-MM-DD and times HH:mm, Asia/Dhaka. The window rules are checked against the MERGED result (stored row + this patch): a date without its time is a 400, and so is a closing at or before the opening.\n\n`{ \"enabled\": false }` closes the form immediately - one request, no restart.\n\n`discordInviteUrl` must be a full https address; it is rendered as a button in the welcome email.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true,\n  \"openDate\": null,\n  \"openTime\": null,\n  \"closeDate\": \"2026-12-31\",\n  \"closeTime\": \"23:59\",\n  \"autoAddToRoster\": true,\n  \"welcomeEmailEnabled\": true,\n  \"discordInviteUrl\": \"https://discord.gg/your-invite\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Settings saved', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().data).to.have.property('window');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Registrations",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/registrations?status=all&emailStatus=all&page=1&limit=50",
+            "description": "Requires admin auth. Newest first, paginated in `meta`.\n\n- status: all | PENDING | ENROLLED (ENROLLED = the address is on the ACTIVE roster)\n- emailStatus: all | PENDING | SENT | FAILED | SKIPPED\n- search: matches name, email, phone and Discord username\n\nA FAILED welcome email carries the reason in `welcomeEmailError`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const jsonData = pm.response.json();",
+                  "",
+                  "pm.test('Registrations retrieved', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(jsonData.data).to.be.an('array');",
+                  "    pm.expect(jsonData.meta).to.have.property('total');",
+                  "});",
+                  "",
+                  "if (jsonData.data && jsonData.data.length > 0) {",
+                  "    pm.collectionVariables.set('registrationId', jsonData.data[0].id);",
+                  "    console.log('registrationId saved to collection variables');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Add Registrations To Roster",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/registrations/add-to-roster",
+            "description": "Requires admin auth. Body `{}` adds EVERY pending registration; `{ \"ids\": [\"...\"] }` adds a selection (1-500).\n\nCREATE-ONLY on the roster, exactly like the automatic path: an email the roster already holds is left as it is, and an entry an admin removed is NOT reinstated - that registration stays PENDING and is counted in `blockedByRemovedEntry`.",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Roster add reported', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const data = pm.response.json().data;",
+                  "    pm.expect(data).to.have.property('requested');",
+                  "    pm.expect(data).to.have.property('enrolled');",
+                  "    pm.expect(data).to.have.property('blockedByRemovedEntry');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Resend Welcome Email",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/registrations/{{registrationId}}/resend-email",
+            "description": "Requires admin auth. Re-queues one registration's welcome email, whatever its current status. Run List Registrations first to set {{registrationId}}.\n\nRefused BEFORE any row is touched when the email could not be delivered: 400 when welcome emails are switched off or Mailtrap is not configured (the message names the variables), 503 when Redis is unavailable, 404 for an unknown id."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('A documented outcome', function () {",
+                  "    pm.expect([200, 400, 404, 503]).to.include(pm.response.code);",
+                  "});",
+                  "if (pm.response.code !== 200) console.warn(pm.response.json().message);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Retry Unsent Welcome Emails",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/registrations/emails/retry",
+            "description": "Requires admin auth. Queues EVERY welcome email that is PENDING or FAILED and answers `{ requested, queued }`. This emails real people - use it after fixing the Mailtrap configuration, or the day after a daily sending cap rejected a batch.\n\nSame refusals as Resend Welcome Email: 400 when emails are off or Mailtrap is not configured, 503 when Redis is unavailable."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('A documented outcome', function () {",
+                  "    pm.expect([200, 400, 503]).to.include(pm.response.code);",
+                  "});",
+                  "if (pm.response.code !== 200) console.warn(pm.response.json().message);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Export Registrations (CSV)",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/registrations/export?status=all&emailStatus=all",
+            "description": "Requires admin auth. CSV attachment of the filtered set (no paging - it streams every match). Takes the same `search`, `status` and `emailStatus` filters as the listing.\n\nColumns: Name, Email, Phone, Discord Username, Status, Welcome Email, Registered At (Asia/Dhaka). The first three headings are ones POST /roster/import recognises, so the file can be uploaded to the roster as-is."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('CSV returned', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('text/csv');",
                   "});"
                 ]
               }
@@ -1108,7 +1316,7 @@
     },
     {
       "name": "Attendance (Public)",
-      "description": "The web attendance form's public endpoints. These are the ONLY routes in the API with no auth middleware - students are not `users` rows and have no credential to present. Two things stand in for authentication on verify and submit: the handle must resolve to a member currently in the guild and (when roster enforcement is armed) the email must be on the active enrolment list; the caller must also be within its per-IP budget (60/min on window, verify-user, and verify-email; 5/15min on submit). Set the {{attendanceUsername}} and {{attendanceEmail}} variables before running these.",
+      "description": "The web attendance form's public endpoints. Apart from the two public Registration routes (see that folder), these are the only routes in the API with no auth middleware - students are not `users` rows and have no credential to present. Two things stand in for authentication on verify and submit: the handle must resolve to a member currently in the guild and (when roster enforcement is armed) the email must be on the active enrolment list; no per-IP rate limit is applied to these routes right now (the limiters were detached on purpose and are to be re-added later). Set the {{attendanceUsername}} and {{attendanceEmail}} variables before running these.",
       "item": [
         {
           "name": "Get Attendance Window",
@@ -1146,10 +1354,6 @@
                   "    pm.expect(jsonData.data).to.have.property('closesAt');",
                   "    pm.expect(jsonData.data).to.not.have.property('updatedBy');",
                   "    pm.expect(jsonData.data).to.not.have.property('scheduler');",
-                  "});",
-                  "",
-                  "pm.test('Rate limit headers present', function () {",
-                  "    pm.expect(pm.response.headers.has('RateLimit-Limit')).to.be.true;",
                   "});"
                 ]
               }
@@ -1193,17 +1397,7 @@
                   "",
                   "// `verified` and `alreadySubmitted` live INSIDE `data`, not at the top",
                   "// level as the PID sketches them - sendResponse owns the envelope.",
-                  "// reportQueued is always present. pairingConflict / reportReason are",
-                  "// ABSENT when there is no conflict (omitted from the JSON, not null).",
-                  "pm.test('Pairing-aware fields absent without email', function () {",
-                  "    pm.expect(jsonData.data.reportQueued).to.be.false;",
-                  "    pm.expect(jsonData.data).to.not.have.property('pairingConflict');",
-                  "    pm.expect(jsonData.data).to.not.have.property('reportReason');",
-                  "});",
-                  "",
-                  "pm.test('Rate limit headers present', function () {",
-                  "    pm.expect(pm.response.headers.has('RateLimit-Limit')).to.be.true;",
-                  "});"
+                  "// This endpoint never judges the email/handle pairing: that is verify-pair."
                 ]
               }
             }
@@ -1211,7 +1405,7 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/attendance/verify-user?username={{attendanceUsername}}",
-            "description": "Live membership check backing the form's verified badge. The handle is normalized first (trimmed, leading @ stripped, lowercased), so ` @Rakib_Dev ` and `rakib_dev` resolve identically.\n\nReturns 200 with `data.verified` true/false - not 404 - because 'not found' is the routine answer the form has to render either way. `data.alreadySubmitted` reports whether this member already has an attendance row for today's Asia/Dhaka date, which `data.attendanceDate` names.\n\nAccepts an optional `email` query parameter. When supplied the answer is pairing-aware in three ways: bound together + today's row recorded -> alreadySubmitted: true; one side recorded, other clean -> alreadySubmitted: false (can submit); bound to a different account or address -> reportQueued: true, status 202 (mismatch report filed for an admin). Pass the email from the form so the badge and the conflict check both match the email the student actually typed."
+            "description": "Live membership check backing the form's verified badge. The handle is normalized first (trimmed, leading @ stripped, lowercased), so ` @Rakib_Dev ` and `rakib_dev` resolve identically.\n\nReturns 200 with `data.verified` true/false - not 404 - because 'not found' is the routine answer the form has to render either way. `data.alreadySubmitted` reports whether this member already has an attendance row for today's Asia/Dhaka date, which `data.attendanceDate` names.\n\nAccepts an optional `email` query parameter, which only narrows `alreadySubmitted` (see the 'Pairing-Aware Duplicate Check' request). This endpoint never judges whether the email and the handle belong together - that is `GET /attendance/verify-pair` - and it files nothing."
           }
         },
         {
@@ -1240,9 +1434,6 @@
                   "    pm.response.to.have.status(200);",
                   "    pm.expect(jsonData.data.verified).to.be.false;",
                   "    pm.expect(jsonData.data.member).to.be.null;",
-                  "    pm.expect(jsonData.data.reportQueued).to.be.false;",
-                  "    pm.expect(jsonData.data).to.not.have.property('pairingConflict');",
-                  "    pm.expect(jsonData.data).to.not.have.property('reportReason');",
                   "});"
                 ]
               }
@@ -1310,51 +1501,24 @@
                 "exec": [
                   "const jsonData = pm.response.json();",
                   "",
-                  "pm.test('Pairing-aware check still 200, not a hard error', function () {",
-                  "    pm.response.to.have.status(200);",
-                  "    pm.expect(jsonData.success).to.be.true;",
-                  "});",
-                  "",
-                  "// The endpoint always answers the verification question in the same envelope shape",
-                  "// (verified / alreadySubmitted / member / servers / pairingConflict / reportQueued / reportReason).",
-                  "// With the optional email supplied, the answer is pairing-aware in three ways:",
-                  "//   * bound together + today's row recorded  -> alreadySubmitted: true (success card)",
-                  "//   * one side recorded, other clean          -> alreadySubmitted: false (submit button)",
-                  "//   * bound to a different account / address  -> reportQueued: true, status 202 (report card)",
-                  "pm.test('Response carries the verify-user payload', function () {",
-                  "    pm.expect(jsonData.data).to.have.property('verified');",
-                  "    pm.expect(jsonData.data).to.have.property('alreadySubmitted');",
-                  "    pm.expect(jsonData.data).to.have.property('attendanceDate');",
-                  "    pm.expect(jsonData.data).to.have.property('servers');",
-                  "    pm.expect(jsonData.data).to.have.property('reportQueued');",
-                  "});",
-                  "",
                   "// A malformed email is a 400 (Zod), not a 200-with-false. The form must distinguish",
                   "// 'fix your typing' from 'no such handle'.",
-                  "pm.test('Malformed email is NOT skipped', function () {",
-                  "    if (pm.request.url.query.get('email') === 'not-an-email') {",
+                  "if (pm.request.url.query.get('email') === 'not-an-email') {",
+                  "    pm.test('Malformed email is NOT skipped', function () {",
                   "        pm.response.to.have.status(400);",
-                  "    }",
-                  "});",
-                  "",
-                  "// A pairing conflict MUST surface as 202 with reportQueued: true. The form",
-                  "// branches on these to show the report card, not the success card.",
-                  "// pairingConflict is a string (the conflict kind), not an object —",
-                  "// ABSENT when there is no conflict, PRESENT when there is.",
-                  "pm.test('Pairing conflict (if any) is reported with the right status', function () {",
-                  "    if (jsonData.data.reportQueued === true) {",
-                  "        pm.expect(jsonData.data.alreadySubmitted).to.be.false;",
-                  "        pm.expect(jsonData.data).to.have.property('pairingConflict');",
-                  "        pm.expect(['email_to_other_username', 'username_to_other_email'])",
-                  "            .to.include(jsonData.data.pairingConflict);",
-                  "        pm.expect(jsonData.data.reportReason).to.equal('HANDLE_MISMATCH_PAIRING');",
-                  "        pm.response.to.have.status(202);",
-                  "    } else {",
-                  "        // Not-conflict path: pairingConflict / reportReason are absent.",
-                  "        pm.expect(jsonData.data).to.not.have.property('pairingConflict');",
-                  "        pm.expect(jsonData.data).to.not.have.property('reportReason');",
-                  "    }",
-                  "});"
+                  "    });",
+                  "} else {",
+                  "    // Always 200: supplying the email only narrows `alreadySubmitted`. It never",
+                  "    // turns into a pairing verdict - that is GET /attendance/verify-pair.",
+                  "    pm.test('Always 200 with the verify-user payload', function () {",
+                  "        pm.response.to.have.status(200);",
+                  "        pm.expect(jsonData.success).to.be.true;",
+                  "        pm.expect(jsonData.data).to.have.property('verified');",
+                  "        pm.expect(jsonData.data).to.have.property('alreadySubmitted');",
+                  "        pm.expect(jsonData.data).to.have.property('attendanceDate');",
+                  "        pm.expect(jsonData.data).to.have.property('servers');",
+                  "    });",
+                  "}"
                 ]
               }
             }
@@ -1362,7 +1526,7 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/attendance/verify-user?username={{attendanceUsername}}&email={{attendanceEmail}}",
-            "description": "Pairing-aware duplicate check. When the optional `email` query parameter is supplied the response resolves to one of three outcomes.\n\n1. Email + username bound to the same person AND today's row is recorded: `200` + `verified: true, alreadySubmitted: true` - form shows the success card; nothing more to do.\n\n2. One side recorded today, the other not, binding clean: `200` + `verified: true, alreadySubmitted: false` - form shows the submit button (normal path).\n\n3. Email paired to a different account OR username paired to a different email: `202` + `verified: true, alreadySubmitted: false, reportQueued: true, pairingConflict: { kind: 'email_to_other_username' | 'username_to_other_email' }, reportReason: 'HANDLE_MISMATCH_PAIRING'` - a discord-pairing-mismatch report is filed for an admin to review. The form renders the report card; today's attendance is NOT recorded.\n\nReplace `{{attendanceEmail}}` with `not-an-email` to verify the 400 path without disturbing the rest of the request."
+            "description": "verify-user with the optional `email` query parameter. Always `200`. The email only narrows `alreadySubmitted`:\n\n- With `email`: `alreadySubmitted` is `true` when every server the handle is in already has today's row AND the email either has its own attendance row today or is not on the active roster.\n- Without `email`: `alreadySubmitted` is `true` whenever every server the handle is in has today's row.\n\nThis endpoint never judges whether the email and the handle belong together and files nothing - use `GET /attendance/verify-pair` for that.\n\nReplace `{{attendanceEmail}}` with `not-an-email` to verify the 400 path without disturbing the rest of the request."
           }
         },
         {
@@ -1398,10 +1562,7 @@
                   "// Only meaningful when the roster gate is armed. With it off the endpoint",
                   "// answers verified:false (no check was performed) and",
                   "// data.emailVerificationRequired:false - the form should skip the badge",
-                  "// entirely rather than rendering a ✅ on a random address.",
-                  "pm.test('Rate limit headers present', function () {",
-                  "    pm.expect(pm.response.headers.has('RateLimit-Limit')).to.be.true;",
-                  "});"
+                  "// entirely rather than rendering a \u2705 on a random address."
                 ]
               }
             }
@@ -1409,7 +1570,7 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/attendance/verify-email?email={{attendanceEmail}}",
-            "description": "Live roster-membership check backing the form's email badge. The address is normalized first (trimmed, lowercased) so a student pasting from a chat message that picked up trailing whitespace still resolves.\n\nReturns 200 with `data.verified` true/false - NOT 4xx - because 'not enrolled' is the routine answer the form has to render either way as a hint. `data.emailVerificationRequired` mirrors the gate the submit endpoint will check, so a form that only calls this endpoint still knows whether the rule is armed.\n\nWhen the gate is OFF the endpoint reports `verified: false` and `emailVerificationRequired: false` for every well-formed address. There is no check to pass, so `verified` is deliberately `false` - reporting `true` would read as 'this address is enrolled' for a check that never ran, and would let the form show a ✅ on a random address. Submit also bypasses the gate in this state, so the answer is consistent across read-time and write-time."
+            "description": "Live roster-membership check backing the form's email badge. The address is normalized first (trimmed, lowercased) so a student pasting from a chat message that picked up trailing whitespace still resolves.\n\nReturns 200 with `data.verified` true/false - NOT 4xx - because 'not enrolled' is the routine answer the form has to render either way as a hint. `data.emailVerificationRequired` mirrors the gate the submit endpoint will check, so a form that only calls this endpoint still knows whether the rule is armed.\n\nWhen the gate is OFF the endpoint reports `verified: false` and `emailVerificationRequired: false` for every well-formed address. There is no check to pass, so `verified` is deliberately `false` - reporting `true` would read as 'this address is enrolled' for a check that never ran, and would let the form show a \u2705 on a random address. Submit also bypasses the gate in this state, so the answer is consistent across read-time and write-time."
           }
         },
         {
@@ -1513,7 +1674,7 @@
           "request": {
             "method": "GET",
             "url": "{{baseUrl}}/attendance/verify-email?email=anywellformed@example.com",
-            "description": "When the roster gate is OFF, no enrolment check is performed. The endpoint reports `verified: false` and `emailVerificationRequired: false` for every well-formed address - never `verified: true`, which would let the form render a ✅ on a random address. Submit also bypasses the gate in this state, so the answer is consistent across read-time and write-time.\n\nThis test preflights by PATCHing `enforceEmail: false` against the admin settings endpoint (the supported rollback) and rearms to `true` in the test script, so the rest of the collection continues to see the gate-armed contract."
+            "description": "When the roster gate is OFF, no enrolment check is performed. The endpoint reports `verified: false` and `emailVerificationRequired: false` for every well-formed address - never `verified: true`, which would let the form render a \u2705 on a random address. Submit also bypasses the gate in this state, so the answer is consistent across read-time and write-time.\n\nThis test preflights by PATCHing `enforceEmail: false` against the admin settings endpoint (the supported rollback) and rearms to `true` in the test script, so the rest of the collection continues to see the gate-armed contract."
           }
         },
         {
@@ -1548,6 +1709,53 @@
             "method": "GET",
             "url": "{{baseUrl}}/attendance/verify-email?email=not-an-email",
             "description": "A format error is a 400 and a DIFFERENT outcome from 'not enrolled' (200, verified:false). The form must tell 'fix your typing' (400) apart from 'use the email you enrolled with' (200 + verified:false) so the student knows which input to fix."
+          }
+        },
+        {
+          "name": "Verify Pair",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// These endpoints are public: students have no account to log in with.",
+                  "// The collection-level pre-request adds an Authorization header to every",
+                  "// request, so remove it here to prove these work with no credentials.",
+                  "pm.request.headers.remove('Authorization');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const jsonData = pm.response.json();",
+                  "",
+                  "pm.test('Pair verdict answered as data', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(jsonData.success).to.be.true;",
+                  "    pm.expect(jsonData.data).to.have.property('verified');",
+                  "    pm.expect(jsonData.data).to.have.property('conflict');",
+                  "    pm.expect(jsonData.data).to.have.property('handleIsMember');",
+                  "    pm.expect(jsonData.data).to.have.property('emailOnRoster');",
+                  "});",
+                  "",
+                  "// A conflict is never a submittable pair: the form keeps submit disabled.",
+                  "pm.test('A conflict is never verified', function () {",
+                  "    if (jsonData.data.conflict === true) {",
+                  "        pm.expect(jsonData.data.verified).to.be.false;",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/attendance/verify-pair?email={{attendanceEmail}}&username={{attendanceUsername}}",
+            "description": "The pre-submit check behind the form's submit button. Read-only by contract: it detects a pairing disagreement and reports it as data, writing and filing NOTHING.\n\nSend only once BOTH field badges are green. The answer is a boolean pair verdict, never a third party's identity:\n\n- `verified: true` \u2014 the email\u2194handle pair agrees (or both sides are unpaired: the first-write rule applies and the submit claims the pairing). Enable the submit button.\n- `verified: false, conflict: true` \u2014 the pair disagrees in one of two directions (the email's entry is paired to a different account, or the handle's account is paired to a different email). Keep the submit button DISABLED and tell the student the email and Discord username do not match.\n- `verified: false, conflict: false` \u2014 the handle is not an active member (`handleIsMember: false`); the handle badge already says so.\n\n`conflict: true` never says WHICH side is wrong \u2014 the response deliberately does not name the pairing that disagrees, on a route reachable without a token. A network error here is NOT a blocker for the form: the submit path re-enforces the same check with a 403.\n\nReplace `{{attendanceEmail}}` with `not-an-email` to verify the 400 path."
           }
         },
         {
@@ -1601,7 +1809,7 @@
                 }
               }
             },
-            "description": "Records today's attendance. Exactly two fields plus one optional flag; anything else is refused as a 400.\n\nValidation: `email` well-formed; `discordUsername` per the official Discord standard.\n\nThe form does not collect `name` or `phone` — those values are sourced from the matched active roster entry when roster enforcement is enabled (see /roster/settings), or recorded as empty strings when enforcement is disabled. Carrying `name` or `phone` on the body is a 400 naming the field, so a stale form is surfaced rather than silently dropping the extra keys.\n\nMembership is re-verified here even if verify-user was called first. That endpoint is a UI affordance - nothing forces a client to call it, and a member can leave the guild between the two requests. Golden Rule 3 is enforced on this path, not in the browser.\n\n`cannotEnterRealDiscordUsername` is optional. The flag is consumed only when the entry is paired and the submitted handle differs from the recorded pairing: the submission is **NOT** recorded as today's attendance. Instead, an open mismatch report is filed for an administrator to review, and the response is 202 Accepted with `attendanceRecorded: false` and `reportQueued: true`. After the admin reassigns the pairing, the student's next submission goes through normally and is recorded as today. Unpaired entries are recorded as before; mismatched submissions without the flag are refused with 403. See /roster/discord-mismatch-reports for the admin surface.\n\nOn success the submitted email is carried onto the member's directory entry, in the same transaction as the insert. Under roster enforcement, the matched entry's stored phone is also carried onto the directory; under unenforced enforcement, the directory's existing phone is left untouched."
+            "description": "Records today's attendance. Exactly two fields; anything else is refused as a 400.\n\nValidation: `email` well-formed; `discordUsername` per the official Discord standard.\n\nThe form does not collect `name` or `phone` \u2014 those values are sourced from the matched active roster entry when roster enforcement is enabled (see /roster/settings), or recorded as empty strings when enforcement is disabled. Carrying `name` or `phone` on the body is a 400 naming the field, so a stale form is surfaced rather than silently dropping the extra keys.\n\nMembership is re-verified here even if verify-user was called first. That endpoint is a UI affordance - nothing forces a client to call it, and a member can leave the guild between the two requests. Golden Rule 3 is enforced on this path, not in the browser.\n\nThe pre-attendance pairing check runs in BOTH directions and a disagreement is a hard 403 \u2014 nothing is written and nothing is filed. The form gates its submit button on `GET /verify-pair` and keeps it disabled while the pair disagrees. Unpaired entries are recorded as before: the first submission claims the pairing.\n\nOn success the submitted email is carried onto the member's directory entry, in the same transaction as the insert. Under roster enforcement, the matched entry's stored phone is also carried onto the directory; with enforcement off, the directory's existing phone is left untouched."
           }
         },
         {
@@ -1706,7 +1914,7 @@
           }
         },
         {
-          "name": "Submit Attendance - Handle Bound to Different Email (202)",
+          "name": "Submit Attendance - Handle Bound to Different Email (403)",
           "event": [
             {
               "listen": "prerequest",
@@ -1727,16 +1935,14 @@
                 "exec": [
                   "const jsonData = pm.response.json();",
                   "",
-                  "// The symmetric case to the flag-driven branch: the SUBMITTED HANDLE",
-                  "// is already roster-paired to a DIFFERENT email than the one supplied.",
-                  "// No flag is required; the report is auto-filed. Today's attendance",
-                  "// is NOT recorded.",
-                  "pm.test('Auto-filed pairing mismatch report', function () {",
-                  "    pm.response.to.have.status(202);",
-                  "    pm.expect(jsonData.success).to.be.true;",
-                  "    pm.expect(jsonData.data.attendanceRecorded).to.be.false;",
-                  "    pm.expect(jsonData.data.reportQueued).to.be.true;",
-                  "    pm.expect(jsonData.message).to.include('Discord pairing mismatch report filed');",
+                  "// The SUBMITTED HANDLE is already roster-paired to a DIFFERENT",
+                  "// email than the one supplied. The pre-attendance pairing check",
+                  "// runs in both directions; there is no way to bypass it, and",
+                  "// nothing is filed.",
+                  "pm.test('Pairing mismatch refused with the standard message', function () {",
+                  "    pm.response.to.have.status(403);",
+                  "    pm.expect(jsonData.success).to.be.false;",
+                  "    pm.expect(jsonData.message).to.include('do not match our records');",
                   "});"
                 ]
               }
@@ -1760,7 +1966,7 @@
                 }
               }
             },
-            "description": "Symmetric to the flag-driven 202 — but the student does NOT have to tick any box. The submit path runs the pre-attendance pairing check in BOTH directions, and fires an open discord-pairing-mismatch report whenever the submitted handle is already roster-paired to a DIFFERENT email.\n\nSetup (run these first):\n\n1. 'Submit Attendance' (above) — pairs `{{attendanceUsername}}` to `{{attendanceEmail}}`.\n2. Import a roster that ALSO enrolls `{{pairingThiefEmail}}` (any second active entry).\n\nThen this request: same handle, the second email. Result: 202 Accepted with `attendanceRecorded: false` and `reportQueued: true`. No attendance row is written. A `discord_pairing_mismatch_reports` row exists against the FIRST entry (the one that already held the handle), not the second — the admin opens that report to disambiguate the binding.\n\nThis is the case the post-attendance `recordRosterPairing` write used to leak silently: the new email's entry was unbound, so the first-write claim updated it, only to be swallowed by the `@unique` on `discord_user_id` (entry A already held the handle). The student saw a 201 success card and no report was filed. The pre-attendance check here catches that case BEFORE any attendance row is written, so a direct `POST /submit` cannot bypass it."
+            "description": "Symmetric refusal \u2014 the SUBMITTED HANDLE is already roster-paired to a DIFFERENT email than the one supplied. The pre-attendance pairing check runs in both directions, so this case is caught BEFORE any attendance row is written. There is no way to bypass it and nothing is filed: the form keeps its submit button disabled on the same verdict from `GET /verify-pair`.\n\nSetup (run these first):\n\n1. 'Submit Attendance' (above) \u2014 pairs `{{attendanceUsername}}` to `{{attendanceEmail}}`.\n2. Import a roster that ALSO enrolls `{{pairingThiefEmail}}` (any second active entry).\n\nThen this request: same handle, the second email. Result: 403 Forbidden with the standard `This Discord username and email address do not match our records. \u2026` message. No attendance row is written."
           }
         }
       ]

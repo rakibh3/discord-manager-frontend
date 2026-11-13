@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { DISCORD_USERNAME_REGEX, normalizeDiscordUsername } from "./attendance";
+
 /** Bangladeshi mobile: `01711000000`, `+8801711000000` or `8801711000000`.
  *  Kept local to the admin-side roster entry validation — the public attendance
  *  form no longer collects phone numbers (those come from the matched roster
@@ -21,14 +23,31 @@ export const rosterEntryEditSchema = z
       ])
       .optional()
       .transform((val) => (val === "" ? null : val)),
+    /** The Discord username the student is paired with. Normalized the same
+     *  way the public form does it; `""` or `null` clears the pairing. */
+    discordUsername: z
+      .union([
+        z
+          .string()
+          .transform(normalizeDiscordUsername)
+          .refine((value) => value === "" || DISCORD_USERNAME_REGEX.test(value), {
+            error:
+              "Use the name under the @ on their Discord profile — 2 to 32 characters, lowercase letters, digits, _ or . only. Leave blank to clear it.",
+          }),
+        z.null(),
+      ])
+      .optional()
+      .transform((val) => (val === "" ? null : val)),
   })
   .refine(
     (data) =>
       data.name !== undefined ||
       data.email !== undefined ||
-      data.phone !== undefined,
+      data.phone !== undefined ||
+      data.discordUsername !== undefined,
     {
-      error: "At least one field (name, email, or phone) must be provided to update.",
+      error:
+        "At least one field (name, email, phone, or Discord username) must be provided to update.",
     },
   );
 

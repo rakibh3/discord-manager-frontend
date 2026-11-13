@@ -79,8 +79,8 @@ export function DailyStatusUnavailable() {
               given date — the target preview is the same query the send uses.
             </li>
             <li>
-              <strong>Discord</strong> shows the member directory and whether
-              daily-update ingestion is actually recording anything.
+              <strong>Discord Servers</strong> shows the member directory and
+              whether daily-update ingestion is actually recording anything.
             </li>
           </ul>
         </CardContent>

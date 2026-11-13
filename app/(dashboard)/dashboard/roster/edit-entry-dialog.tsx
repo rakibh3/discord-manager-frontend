@@ -25,12 +25,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import type { RosterEntry } from "@/lib/api/types";
+import { normalizeDiscordUsername } from "@/lib/validation/attendance";
 import { rosterEntryEditSchema } from "@/lib/validation/roster";
 
 type EditFormValues = {
   name: string;
   email: string;
   phone: string;
+  discordUsername: string;
 };
 
 function EditEntryForm({
@@ -46,7 +48,14 @@ function EditEntryForm({
     name: entry.name,
     email: entry.email,
     phone: entry.phone ?? "",
+    discordUsername: entry.discordUsername ?? "",
   });
+  // Paired with an account that has since left the server: there is no
+  // username to show, so the field starts empty even though a pairing exists.
+  // Saving it empty must then CLEAR that pairing rather than read as "no
+  // change" — otherwise the student stays locked out of the attendance form.
+  const hasStalePairing =
+    entry.discordUserId !== null && entry.discordUsername === null;
   const [errors, setErrors] = useState<Partial<Record<keyof EditFormValues, string>>>({});
   const [generalError, setGeneralError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -61,7 +70,12 @@ function EditEntryForm({
     e.preventDefault();
     if (isSaving) return;
 
-    const payload: { name?: string; email?: string; phone?: string | null } = {};
+    const payload: {
+      name?: string;
+      email?: string;
+      phone?: string | null;
+      discordUsername?: string | null;
+    } = {};
     if (values.name.trim() !== entry.name) {
       payload.name = values.name.trim();
     }
@@ -71,6 +85,15 @@ function EditEntryForm({
     const currentPhone = values.phone.trim() || null;
     if (currentPhone !== entry.phone) {
       payload.phone = currentPhone;
+    }
+    // Compared after the same normalization the server applies, so retyping
+    // the current name with an `@` or different casing is not a change.
+    const typedHandle = normalizeDiscordUsername(values.discordUsername);
+    if (typedHandle !== (entry.discordUsername ?? "")) {
+      payload.discordUsername = typedHandle || null;
+    } else if (hasStalePairing && typedHandle === "") {
+      // The field's help text says saving it empty clears the stale pairing.
+      payload.discordUsername = null;
     }
 
     if (Object.keys(payload).length === 0) {
@@ -165,6 +188,26 @@ function EditEntryForm({
           </FieldDescription>
           <FieldError>{errors.phone}</FieldError>
         </Field>
+
+        <Field data-invalid={errors.discordUsername ? true : undefined}>
+          <FieldLabel htmlFor="edit-discord-username">Discord username</FieldLabel>
+          <Input
+            id="edit-discord-username"
+            value={values.discordUsername}
+            onChange={(e) => setField("discordUsername", e.target.value)}
+            aria-invalid={errors.discordUsername ? true : undefined}
+            placeholder="rakib_dev"
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
+          />
+          <FieldDescription>
+            {hasStalePairing
+              ? "This student is paired with an account that is no longer in the server, so attendance is refused. Enter their current username, or save with this empty to clear the pairing."
+              : "The name under the @ on their Discord profile. Attendance is only accepted from this account with the email above. Must be a current server member; leave empty to clear the pairing."}
+          </FieldDescription>
+          <FieldError>{errors.discordUsername}</FieldError>
+        </Field>
       </FieldGroup>
 
       <DialogFooter>
@@ -215,7 +258,8 @@ export function EditEntryDialog({
             Edit student details
           </DialogTitle>
           <DialogDescription>
-            Correct the student&apos;s name, email, or contact number.
+            Correct the student&apos;s name, email, contact number, or Discord
+            username.
           </DialogDescription>
         </DialogHeader>
 

@@ -3,11 +3,15 @@ import { z } from "zod";
 /** Shared attendance validation, mirroring the backend's Zod rules. Not
  *  `server-only`: the form runs these in the browser, the server enforces them.
  *
- *  ⚠️ The submit body carries **only** `email` and `discordUsername` (plus the
- *  optional mismatch flag). The student's `name` and `phone` are not part of
- *  the request — the backend sources them from the matched active roster entry
- *  when enforcement is enabled, and records empty strings otherwise. Carrying
- *  them on the body is refused with a 400 naming the field. */
+ *  ⚠️ The submit body carries **only** `email` and `discordUsername`. The
+ *  student's `name` and `phone` are not part of the request — the backend
+ *  sources them from the matched active roster entry when enforcement is
+ *  enabled, and records empty strings otherwise. Carrying them on the body
+ *  is refused with a 400 naming the field.
+ *
+ *  Whether the email and the handle belong together is NOT a schema rule: the
+ *  form asks the server via the pre-submit `/verify-pair` check and keeps its
+ *  submit button disabled while the pair disagrees. */
 
 /** Official Discord username rule: 2–32 chars of `[a-z0-9_.]`, no consecutive
  *  dots. ⚠️ Do not tighten — 5.3% of members have a leading/trailing separator. */
@@ -28,9 +32,6 @@ export const attendanceSchema = z.object({
       error:
         "Use the name under the @ on your Discord profile — 2 to 32 characters, lowercase letters, digits, _ or . only, and no two dots in a row.",
     }),
-  /** When a student's Discord pairing does not match the on-file record, ticking
-   *  this lets them submit anyway and queues a mismatch report for review. */
-  cannotEnterRealDiscordUsername: z.boolean().optional(),
 });
 
 export type AttendanceInput = z.input<typeof attendanceSchema>;

@@ -819,3 +819,39 @@ Phase 7: Admin Dashboard (Frontend & API)
 5. **Timezone Uniformity:** ডেট ক্যালকুলেশনে সবসময় `Asia/Dhaka` টাইমজোন স্ট্যান্ডার্ড হিসেবে বজায় রাখতে হবে।
 6. **Instant Ingestion:** মেসেজ এবং ফর্ম সাবমিশন কখনো রাতের জন্য জমিয়ে রাখা যাবে না; আসার সাথে সাথেই ডাটাবেসে সেভ করতে হবে।
 7. **Idempotency & Unique Constraints:** `discord_message_id` এবং `(user_id, attendance_date)` ইউনিক রেখে ডুপ্লিকেট এন্ট্রি প্রতিরোধ করতে হবে।
+
+---
+
+# 17. Public Registration Form (addendum)
+
+Added after the original PID. A sign-up form for prospective students who are **not in a Discord server yet**, managed by the admin from the dashboard.
+
+### 17.1. Form Fields
+
+| Field            | Rule                                                                                 |
+| ---------------- | ------------------------------------------------------------------------------------ |
+| Name             | 2-150 characters                                                                     |
+| Email            | Trimmed and lowercased; one registration per address                                 |
+| Phone            | Bangladeshi mobile, stored as `01XXXXXXXXX`                                          |
+| Discord username | Official username standard (Section 3.2). Unverified - the person has not joined yet |
+
+### 17.2. Registration Window
+
+- The admin sets when registration opens and closes from the dashboard (`/dashboard/registration`): an on/off switch plus an optional opening and closing date and time in `Asia/Dhaka` (Golden Rule 5).
+- The form is **switched off by default**. Outside the window the public page shows when it opens or that it has closed; the backend re-checks the window on every submission.
+
+### 17.3. Enrolment Roster
+
+- An accepted registration is added to the enrolment roster automatically (the admin can switch this off and add registrations manually instead).
+- The roster write is **create-only**: an email already on the roster is never changed, and an entry the admin removed is never reinstated.
+- The declared Discord username is **not** used to pair the roster entry. Pairing is still learned from the student's first accepted attendance submission.
+
+### 17.4. Welcome Email (Mailtrap)
+
+- After a successful registration a welcome email is sent through Mailtrap, including the Discord invite link the admin stored in the registration settings.
+- Sending goes through a BullMQ queue with retries, in the spirit of Golden Rule 4: the registration is saved first (Golden Rule 6), and an email failure never fails the registration.
+- Each registration records its email status (pending / sent / failed / not sent) and the admin can resend one or retry all unsent emails.
+
+### 17.5. Abuse Protection
+
+- Unlike the attendance form, registration cannot be gated on server membership (Golden Rule 3 does not apply - there is no membership yet). It is bounded instead by the window, the unique email, and a per-IP rate limit on the submit endpoint (10 requests per 15 minutes).

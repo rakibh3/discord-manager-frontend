@@ -657,49 +657,18 @@ export type VerifiedMember = {
   avatarUrl: string | null;
 };
 
-/** The pairing conflict the pairing-aware check resolved to on a 202 response.
- *  Present only when `reportQueued: true`. The "paired to" account / email is
- *  deliberately NOT included in the response — the admin opens the report for
- *  those details. */
-export type PairingConflict =
-  /** The email is paired to a Discord account other than the one this handle
-   *  resolves to (email-side direction). */
-  | "email_to_other_username"
-  /** The handle is paired to an email other than the one supplied (handle-side
-   *  direction). */
-  | "username_to_other_email";
-
-/** The reason the pairing-aware check filed a report. Always present when
- *  `reportQueued: true`. */
-export type PairingReportReason = "HANDLE_MISMATCH_PAIRING";
-
 /** `GET /attendance/verify-user` answers **200 even for an unknown handle** —
  *  branch on `verified`. `member` is always `null` when `verified` is false.
  *
- *  When the optional `email` query parameter is supplied and the pairing-aware
- *  check detects a mismatch, the endpoint files a discord-pairing-mismatch
- *  report for an admin to review and answers **202** with `reportQueued: true`.
- *  The form must render a "report filed" card on that branch — a green ✅
- *  "verified" badge would be a lie. `pairingConflict` and `reportReason` are
- *  present ONLY on the report-queued branch. */
+ *  This endpoint says nothing about whether the email and the handle belong
+ *  together — that is `GET /attendance/verify-pair` (`VerifyPairPayload`),
+ *  which the form's submit button gates on. */
 export type VerifyUserPayload = {
   verified: boolean;
-  /** ⚠️ True only when **every** server the handle is in already has today's
-   *  row — someone in two servers who submitted in one still has work to do.
-   *  Forced to `false` when `reportQueued: true`. */
+  /** Whether today's attendance is already recorded for this handle. */
   alreadySubmitted: boolean;
   attendanceDate: string;
   member: VerifiedMember | null;
-  servers?: (ServerRef & { alreadySubmitted: boolean })[];
-  /** Present only when the pairing-aware check filed a report. The form
-   *  branches on this to render the "report filed" card. */
-  reportQueued?: boolean;
-  /** Which direction the pairing mismatch points. Present only when
-   *  `reportQueued: true`. */
-  pairingConflict?: PairingConflict;
-  /** Why the report was filed. Always `"HANDLE_MISMATCH_PAIRING"` today;
-   *  kept as a string for forward compatibility. */
-  reportReason?: PairingReportReason;
 };
 
 /** `GET /attendance/verify-email` answers **200 even for an unrecognised
@@ -716,33 +685,48 @@ export type VerifyEmailPayload = {
   emailVerificationRequired: boolean;
 };
 
+/** `GET /attendance/verify-pair` answers **200 either way** — branch on
+ *  `verified`. This is the pre-submit check the form's submit button gates
+ *  on: `verified: true` means the email + handle pair is submittable as-is
+ *  (the handle is an active member AND no pairing disagreement exists in
+ *  either direction), matching what `POST /submit` will decide one click
+ *  later.
+ *
+ *  The endpoint is READ-ONLY — it never writes anything, so the form can
+ *  call it on a settled input with no side effect per keystroke. The form
+ *  disables its submit button on `verified: false`; the submit path
+ *  enforces the same rule server-side with a hard 403.
+ *
+ *  `conflict` says a pairing disagreement was detected WITHOUT naming the
+ *  paired side — the paired account and email belong to another student,
+ *  and this route is reachable without a token. */
+export type VerifyPairPayload = {
+  verified: boolean;
+  conflict: boolean;
+  /** The handle resolved to at least one active member row. */
+  handleIsMember: boolean;
+  /** The email resolved to an active roster entry. */
+  emailOnRoster: boolean;
+  attendanceDate: string;
+  /** Whether the roster gate is armed — same field `/window` and
+   *  `/verify-email` expose. */
+  emailVerificationRequired: boolean;
+};
+
 export type SubmitAttendancePayload = {
   attendanceDate: string;
   submittedAt: string;
   member: VerifiedMember;
-  /** One row is written per server, in a single transaction. The student
-   *  submits once; the form never asks them to pick a server. Each entry
-   *  carries `recorded` (was written by this request) and `alreadySubmitted`
-   *  (was already on file from an earlier submission). */
-  servers?: (ServerRef & { recorded: boolean; alreadySubmitted: boolean })[];
-  /** On a 201, the attendance row was written. On a 202 (`cannotEnterRealDiscordUsername`
-   *  on a paired-but-mismatched handle), today's attendance is NOT recorded —
-   *  a mismatch report is queued instead. The branch renders a different card. */
+  /** Always `true` on a 201 — every accepted submission records attendance.
+   *  The field survives so the form can keep reading it as its source of
+   *  truth. A pairing disagreement is refused with a hard 403; the form's
+   *  submit button is gated (disabled) on `/verify-pair`. */
   attendanceRecorded?: boolean;
-  /** `true` only on the 202 report-only path. The student cannot view the
-   *  report — the only signal back is this flag combined with the HTML status. */
-  reportQueued?: boolean;
 };
 
 export type AttendanceSubmitInput = {
   email: string;
   discordUsername: string;
-  /** When `true`, the backend accepts a Discord handle that does not match the
-   *  pairing on file for this email and queues a mismatch report for an admin
-   *  to review. The response is a 202 with `attendanceRecorded: false` and
-   *  `reportQueued: true` — today's attendance is NOT recorded against the
-   *  report; the form must render a different card on this branch. */
-  cannotEnterRealDiscordUsername?: boolean;
 };
 
 // ── Daily status (API_INTEGRATION.md §8.8, §5A) ──────────────────────────────
@@ -955,6 +939,15 @@ export type RosterEntry = {
   name: string;
   email: string;
   phone: string | null;
+  /** The Discord ACCOUNT this student is paired with, or `null` when unpaired.
+   *  The attendance form refuses an email + username that disagree with it. */
+  discordUserId: string | null;
+  /** When the pairing was recorded or last corrected. */
+  linkedAt: string | null;
+  /** The paired account's CURRENT username, resolved from the member
+   *  directory. `null` when unpaired — and also when the paired account is no
+   *  longer in the server (`discordUserId` set, this `null`). */
+  discordUsername: string | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -1020,6 +1013,9 @@ export type UpdateRosterEntryInput = {
   name?: string;
   email?: string;
   phone?: string | null;
+  /** A username re-points the pairing at that server member; `null` clears
+   *  it; omitted leaves it alone. */
+  discordUsername?: string | null;
 };
 
 export type UpdateRosterSettingsInput = {
@@ -1176,66 +1172,125 @@ export function isRosterRangeCounts(
   return payload.meta.mode === "range";
 }
 
-// ── Discord pairing mismatch reports (§8.6B) ───────────────────────────────
+// ── Registration (API_INTEGRATION.md §8.6B) ──────────────────────────────────
 
-export type DiscordMismatchReportStatus = "open" | "reassigned" | "dismissed";
+/** `disabled` — an admin has the form switched off (the default).
+ *  `not-yet-open` / `closed` — outside the stored window. */
+export type RegistrationWindowState =
+  | "disabled"
+  | "not-yet-open"
+  | "open"
+  | "closed";
 
-/** One row from `GET /api/roster/discord-mismatch-reports`. Paired /
- *  submitting account snowflakes are never exposed — only the normalized
- *  handles, so the dashboard can render "this Discord username was filed
- *  against this pairing" without leaking account ids to a wider surface
- *  than necessary. */
-export type DiscordMismatchReport = {
+/** `GET /api/registration/window` — public. Carries nothing but the window. */
+export type RegistrationWindow = {
+  isOpen: boolean;
+  state: RegistrationWindowState;
+  /** Instant registration opens; `null` means "as soon as it is enabled". */
+  opensAt: string | null;
+  /** Instant registration closes; `null` means "until it is disabled". */
+  closesAt: string | null;
+  timezone: "Asia/Dhaka";
+};
+
+/** `POST /api/registration/submit` body — exactly these four keys; anything
+ *  else is a 400 naming the key. */
+export type RegistrationSubmitInput = {
+  name: string;
+  email: string;
+  phone: string;
+  discordUsername: string;
+};
+
+export type SubmitRegistrationPayload = {
+  name: string;
+  email: string;
+  /** Whether a welcome email will be sent to that address. */
+  welcomeEmail: boolean;
+};
+
+/** `ENROLLED` means the address is on the ACTIVE enrolment roster. */
+export type RegistrationStatus = "PENDING" | "ENROLLED";
+
+export type WelcomeEmailStatus = "PENDING" | "SENT" | "FAILED" | "SKIPPED";
+
+export type Registration = {
   id: string;
-  entryId: string;
-  entryName: string;
-  entryEmail: string;
-  pairedDiscordUsername: string;
-  pairedDisplayName: string | null;
-  submittingDiscordUsername: string;
-  submittingDisplayName: string | null;
-  submittedHandle: string;
-  reason: "HANDLE_MISMATCH_PAIRING";
-  /** ISO date (YYYY-MM-DD) of the Dhaka day the report was filed for. */
-  submissionDhakaDate: string;
-  reportedAt: string;
-  status: DiscordMismatchReportStatus;
+  name: string;
+  email: string;
+  /** Local form, `01XXXXXXXXX`. */
+  phone: string;
+  /** The handle the registrant DECLARED — unverified, they have usually not
+   *  joined a server yet. */
+  discordUsername: string;
+  status: RegistrationStatus;
+  enrolledAt: string | null;
+  welcomeEmailStatus: WelcomeEmailStatus;
+  welcomeEmailSentAt: string | null;
+  /** Why the email failed, when it did. */
+  welcomeEmailError: string | null;
+  createdAt: string;
 };
 
-/** Listing wraps the items + a `total` mirror of `meta.total`, so the
- *  client never has to look in two places. */
-export type DiscordMismatchReportList = {
-  items: DiscordMismatchReport[];
-  total: number;
+export type RegistrationSettings = {
+  enabled: boolean;
+  /** `YYYY-MM-DD` / `HH:mm`, Asia/Dhaka. A date and its time are set together
+   *  or both `null`. */
+  openDate: string | null;
+  openTime: string | null;
+  closeDate: string | null;
+  closeTime: string | null;
+  autoAddToRoster: boolean;
+  welcomeEmailEnabled: boolean;
+  discordInviteUrl: string | null;
+  window: RegistrationWindow;
+  /** Whether the backend can send mail at all, and why not. */
+  mail: { configured: boolean; sandbox: boolean; reason: string | null };
+  queue: { redisAvailable: boolean };
+  counts: {
+    total: number;
+    pending: number;
+    enrolled: number;
+    emailPending: number;
+    emailSent: number;
+    emailFailed: number;
+  };
+  updatedAt: string | null;
+  updatedBy: { id: string; name: string; email: string } | null;
 };
 
-export type DiscordMismatchReportQuery = {
-  status?: DiscordMismatchReportStatus;
+/** Every key optional, at least one required. `null` clears a date, a time,
+ *  or the link. */
+export type UpdateRegistrationSettingsInput = {
+  enabled?: boolean;
+  openDate?: string | null;
+  openTime?: string | null;
+  closeDate?: string | null;
+  closeTime?: string | null;
+  autoAddToRoster?: boolean;
+  welcomeEmailEnabled?: boolean;
+  discordInviteUrl?: string | null;
+};
+
+export type RegistrationStatusFilter = "all" | RegistrationStatus;
+export type WelcomeEmailStatusFilter = "all" | WelcomeEmailStatus;
+
+export type RegistrationQuery = {
   search?: string;
-  /** Inclusive lower bound on `reportedAt`, ISO 8601. */
-  dateFrom?: string;
-  /** Inclusive upper bound on `reportedAt`, ISO 8601. */
-  dateTo?: string;
+  status?: RegistrationStatusFilter;
+  emailStatus?: WelcomeEmailStatusFilter;
   page?: number;
   limit?: number;
 };
 
-/** `POST /api/roster/discord-mismatch-reports/:id/action` accepts exactly
- *  one of these — anything else (or extra body fields) is a 400. */
-export type DiscordMismatchReportAction = "reassign" | "dismiss";
-
-export type DiscordMismatchReportActionInput = {
-  action: DiscordMismatchReportAction;
+export type AddRegistrationsToRosterResult = {
+  /** Pending registrations the request covered. */
+  requested: number;
+  enrolled: number;
+  createdOnRoster: number;
+  alreadyOnRoster: number;
+  /** Left pending: the roster holds a REMOVED entry for the address. */
+  blockedByRemovedEntry: number;
 };
 
-/** The 200 body carries the post-action status. `rosterEntryId` is echoed
- *  back so the dashboard can refresh the pairing column without an extra
- *  roster fetch. */
-export type DiscordMismatchReportActionResult = {
-  id: string;
-  status: Exclude<DiscordMismatchReportStatus, "open">;
-  reviewedByAdminId: string;
-  reviewedAt: string;
-  rosterEntryId: string;
-};
-
+export type RetryWelcomeEmailsResult = { requested: number; queued: number };

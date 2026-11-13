@@ -276,6 +276,7 @@ export function RosterTable({
                 <TableRow className="hover:bg-transparent">
                   <TableHead className="w-64">Student</TableHead>
                   <TableHead>Enrolment email</TableHead>
+                  <TableHead>Discord username</TableHead>
                   <TableHead>Phone</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Updated</TableHead>
@@ -317,6 +318,18 @@ export function RosterTable({
                           )}
                         </Button>
                       </div>
+                    </TableCell>
+
+                    <TableCell className="text-muted-foreground">
+                      {entry.discordUsername ? (
+                        <span className="font-mono text-xs">
+                          @{entry.discordUsername}
+                        </span>
+                      ) : entry.discordUserId ? (
+                        <span className="text-xs">Paired account left the server</span>
+                      ) : (
+                        <span aria-label="No Discord username paired">&mdash;</span>
+                      )}
                     </TableCell>
 
                     <TableCell className="text-muted-foreground">

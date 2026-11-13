@@ -1,7 +1,6 @@
 "use client";
 
 import { Menu } from "lucide-react";
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 
@@ -13,8 +12,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { isActive, NAV_ITEMS } from "@/components/dashboard/nav-items";
-import { cn } from "@/lib/utils";
+import { NavGroupList } from "@/components/dashboard/nav-group-list";
 
 /** Navigation below the sidebar breakpoint. `Dialog` does the accessibility work
  *  — focus trap, Escape, focus restore, labelling from `DialogTitle`. */
@@ -46,30 +44,11 @@ export function MobileNav({ footer }: { footer?: React.ReactNode }) {
         <DialogHeader>
           <DialogTitle>Navigation</DialogTitle>
         </DialogHeader>
-        <nav aria-label="Dashboard sections">
-          <ul className="flex flex-col gap-1">
-            {NAV_ITEMS.map((item) => {
-              const active = isActive(pathname, item);
-              return (
-                <li key={item.href}>
-                  <Link
-                    href={item.href}
-                    aria-current={active ? "page" : undefined}
-                    className={cn(
-                      "flex min-h-11 items-center gap-3 rounded-md px-3 text-sm font-medium transition-colors",
-                      "focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2",
-                      active
-                        ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                        : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                    )}
-                  >
-                    <item.icon aria-hidden />
-                    {item.label}
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
+        <nav
+          aria-label="Dashboard sections"
+          className="-mx-1 max-h-[60svh] overflow-y-auto px-1"
+        >
+          <NavGroupList />
         </nav>
         {footer && <div className="border-t pt-3 mt-2">{footer}</div>}
       </DialogContent>
