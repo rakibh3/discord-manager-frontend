@@ -8,17 +8,19 @@ const alertVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-card text-card-foreground",
+        default: "border-border bg-card text-card-foreground shadow-xs",
         destructive:
-          "border-destructive bg-destructive/10 text-destructive *:data-[slot=alert-description]:text-destructive/90 *:[svg]:text-current",
+          "border-[var(--border-coral)] bg-destructive/10 text-destructive shadow-[2px_2px_0_0_var(--border-coral)] *:data-[slot=alert-description]:text-destructive/90 *:[svg]:text-current",
         // The health banners distinguish three severities: an outage that is
         // actively losing data (destructive), a guard that fired correctly
         // (warning), and a recovered/healthy state (success). Collapsing the
         // middle one into destructive would train admins to ignore all three.
         warning:
-          "border-warning bg-warning/10 text-warning *:data-[slot=alert-description]:text-warning/90 *:[svg]:text-current",
+          "border-[var(--border-yellow)] bg-warning/15 text-foreground shadow-[2px_2px_0_0_var(--border-yellow)] *:data-[slot=alert-description]:text-foreground/90 *:[svg]:text-current",
         success:
-          "border-success bg-success/10 text-success *:data-[slot=alert-description]:text-success/90 *:[svg]:text-current",
+          "border-[var(--border-sage)] bg-success/15 text-foreground shadow-[2px_2px_0_0_var(--border-sage)] *:data-[slot=alert-description]:text-foreground/90 *:[svg]:text-current",
+        info:
+          "border-[var(--border-lilac)] bg-info/15 text-foreground shadow-[2px_2px_0_0_var(--border-lilac)] *:data-[slot=alert-description]:text-foreground/90 *:[svg]:text-current",
       },
     },
     defaultVariants: {

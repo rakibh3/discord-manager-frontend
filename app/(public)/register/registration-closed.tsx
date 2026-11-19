@@ -1,5 +1,8 @@
-import { CalendarClock, Clock } from "lucide-react";
+import { ArrowRight, CalendarClock, Clock, Lock } from "lucide-react";
+import Link from "next/link";
 
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -24,32 +27,48 @@ export function RegistrationClosed({
   // is simply switched off has no date to offer — inventing one would be a lie.
   const notYetOpen = state === "not-yet-open";
   const title = notYetOpen
-    ? "Registration has not opened yet"
+    ? "Registration opens soon"
     : "Registration is closed";
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-lg">
-          <Clock aria-hidden className="size-6" />
-          {title}
+    <Card accent={notYetOpen ? "yellow" : "coral"} className="gap-5 py-5 sm:py-6">
+      <CardHeader className="border-border-muted border-b px-4 pb-4 sm:px-6">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge
+            variant={notYetOpen ? "warning" : "destructive"}
+            className="font-mono text-[11px]"
+          >
+            {notYetOpen ? (
+              <Clock aria-hidden="true" />
+            ) : (
+              <Lock aria-hidden="true" />
+            )}
+            {notYetOpen ? "NOT OPEN YET" : "CLOSED"}
+          </Badge>
+        </div>
+
+        <CardTitle className="mt-1">
+          <h2 className="text-xl">{title}</h2>
         </CardTitle>
-        <CardDescription className="text-base">
+        <CardDescription className="text-sm">
           {notYetOpen
-            ? "The form will be available here once registration opens."
+            ? "The enrolment form will unlock automatically at the scheduled time."
             : "This form is not accepting new registrations right now."}
         </CardDescription>
       </CardHeader>
 
-      <CardContent className="flex flex-col gap-4 text-base">
+      <CardContent className="flex flex-col gap-4 px-4 text-sm sm:px-6">
         {notYetOpen && opensAt ? (
-          <div className="bg-muted/60 flex flex-col gap-1 rounded-md p-3">
-            <p className="flex items-center gap-2 font-medium">
-              <CalendarClock aria-hidden className="size-5" />
-              Opens {formatDhaka(opensAt)}
+          <div className="border-foreground bg-highlight/20 flex flex-col gap-1.5 rounded-xl border-2 p-4">
+            <p className="text-muted-foreground font-mono text-[11px] font-semibold uppercase">
+              Scheduled window · Asia/Dhaka
+            </p>
+            <p className="font-heading flex items-center gap-2 text-base font-bold">
+              <CalendarClock aria-hidden="true" className="size-5 shrink-0" />
+              <span>Opens {formatDhaka(opensAt)}</span>
             </p>
             {closesAt ? (
-              <p className="text-muted-foreground text-sm">
+              <p className="text-muted-foreground font-mono text-xs">
                 Closes {formatDhaka(closesAt)}
               </p>
             ) : null}
@@ -57,16 +76,34 @@ export function RegistrationClosed({
         ) : null}
 
         {state === "closed" && closesAt ? (
-          <p className="text-muted-foreground">
-            Registration closed on <strong>{formatDhaka(closesAt)}</strong>.
-          </p>
+          <div className="border-foreground bg-muted/50 flex flex-col gap-1 rounded-xl border-2 p-4">
+            <p className="text-muted-foreground font-mono text-[11px] font-semibold uppercase">
+              Window ended · Asia/Dhaka
+            </p>
+            <p className="font-medium">
+              Registration closed on{" "}
+              <strong className="font-mono">{formatDhaka(closesAt)}</strong>.
+            </p>
+          </div>
         ) : null}
 
-        <p className="text-muted-foreground border-t pt-3 text-sm">
+        <p className="text-muted-foreground leading-relaxed">
           {notYetOpen
-            ? "Come back to this page when it opens — there is nothing you need to do before then."
-            : "If you believe you should still be able to register, contact the program organisers."}
+            ? "Bookmark this page and come back once the window opens — there is nothing you need to do before then."
+            : "If you believe you should still be able to register, please contact the program organisers."}
         </p>
+
+        <div className="border-border-muted flex flex-wrap items-center justify-between gap-3 border-t pt-4">
+          <span className="text-muted-foreground text-xs">
+            Already enrolled in the cohort?
+          </span>
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/">
+              Go to Daily Attendance
+              <ArrowRight data-icon="inline-end" aria-hidden="true" />
+            </Link>
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );

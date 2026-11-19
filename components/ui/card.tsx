@@ -2,17 +2,32 @@ import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
+const cardAccentVariants = {
+  default: "shadow-sm",
+  lilac: "shadow-[3px_3px_0_0_var(--border-lilac)]",
+  yellow: "shadow-[3px_3px_0_0_var(--border-yellow)]",
+  coral: "shadow-[3px_3px_0_0_var(--border-coral)]",
+  sage: "shadow-[3px_3px_0_0_var(--border-sage)]",
+  sky: "shadow-[3px_3px_0_0_var(--border-sky)]",
+} as const;
+
 function Card({
   className,
   size = "default",
+  accent = "default",
   ...props
-}: React.ComponentProps<"div"> & { size?: "default" | "sm" }) {
+}: React.ComponentProps<"div"> & {
+  size?: "default" | "sm";
+  accent?: keyof typeof cardAccentVariants;
+}) {
   return (
     <div
       data-slot="card"
       data-size={size}
+      data-accent={accent}
       className={cn(
-        "group/card flex flex-col gap-(--card-spacing) overflow-hidden rounded-2xl border-2 border-foreground bg-card py-(--card-spacing) text-sm text-card-foreground shadow-sm [--card-spacing:--spacing(4)] has-data-[slot=card-footer]:pb-0 has-[>img:first-child]:pt-0 data-[size=sm]:[--card-spacing:--spacing(3)] data-[size=sm]:has-data-[slot=card-footer]:pb-0 *:[img:first-child]:rounded-t-2xl *:[img:last-child]:rounded-b-2xl",
+        "group/card flex flex-col gap-(--card-spacing) overflow-hidden rounded-2xl border-2 border-foreground bg-card py-(--card-spacing) text-sm text-card-foreground [--card-spacing:--spacing(4)] has-data-[slot=card-footer]:pb-0 has-[>img:first-child]:pt-0 data-[size=sm]:[--card-spacing:--spacing(3)] data-[size=sm]:has-data-[slot=card-footer]:pb-0 *:[img:first-child]:rounded-t-2xl *:[img:last-child]:rounded-b-2xl",
+        cardAccentVariants[accent] ?? cardAccentVariants.default,
         className
       )}
       {...props}

@@ -1,16 +1,27 @@
 import type { Metadata } from "next";
 
+import { PublicFooter } from "./_components/public-footer";
+import { PublicHeader } from "./_components/public-header";
+
 export const metadata: Metadata = {
-  title: "Attendance",
-  description: "Submit your daily attendance.",
+  title: "Daily Attendance",
+  description: "Submit your daily attendance and check in with your Discord cohort.",
 };
 
-/** Standalone layout for the public attendance homepage: no `requireSession()`,
- *  no dashboard shell, and `proxy.ts` does not match `/`. */
-export default function AttendanceLayout({ children }: LayoutProps<"/">) {
+/** Standalone public shell for `/` (Daily Attendance) and `/register` (Student
+ *  Registration): no `requireSession()`, no dashboard shell, and `proxy.ts`
+ *  deliberately excludes both routes so students can reach them without logging in. */
+export default function PublicPortalLayout({ children }: LayoutProps<"/">) {
   return (
-    <div className="bg-muted/30 flex min-h-svh flex-col items-center px-4 py-6 sm:py-10">
-      <div className="my-auto w-full max-w-xl">{children}</div>
+    <div className="public-grid-canvas flex min-h-svh flex-col">
+      <PublicHeader />
+      <main
+        id="main-content"
+        className="mx-auto flex w-full max-w-5xl flex-1 flex-col px-4 py-6 sm:px-6 sm:py-10"
+      >
+        {children}
+      </main>
+      <PublicFooter />
     </div>
   );
 }

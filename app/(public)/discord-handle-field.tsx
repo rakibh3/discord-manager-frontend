@@ -3,13 +3,19 @@
 import { CheckCircle2, CircleAlert, Loader2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { DiscordUsernameGuide } from "./_components/discord-username-guide";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import {
   Field,
   FieldDescription,
   FieldLabel,
 } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from "@/components/ui/input-group";
 import type { ApiResponse, VerifyUserPayload } from "@/lib/api/types";
 import {
   DISCORD_USERNAME_REGEX,
@@ -47,17 +53,8 @@ export function isHandleVerified(badge: HandleBadge): boolean {
  *  checked, is unknown, or has not been entered yet.
  *
  *  **No email is forwarded to `/verify-user` from this field.** Pairing
- *  conflicts (a Discord username already paired to a *different* email, or
- *  vice versa) are checked by the form's own debounced `/verify-pair` call
- *  once both field badges are green — and by the submit path, server-side.
- *  Keeping the email out of this request keeps the two questions separate:
- *  this badge answers "is this handle in a server?", the pair check answers
- *  "do this email and this handle belong together?".
- *  The duplicate check on the live badge is therefore handle-only —
- *  `alreadySubmitted: true` for any handle that already submitted today,
- *  even one belonging to a different student. The pairing check narrows the
- *  same scenario down to "is this submission mine?" before the submit
- *  button unlocks. */
+ *  conflicts are checked by the form's own debounced `/verify-pair` call once
+ *  both field badges are green — and by the submit path, server-side. */
 export function DiscordHandleField({
   value,
   onChange,
@@ -65,25 +62,17 @@ export function DiscordHandleField({
   fieldId,
   onVerifiedChange,
   onAlreadySubmittedChange,
+  onBadgeKindChange,
+  inputRef,
 }: {
   value: string;
   onChange: (value: string) => void;
   error?: string;
   fieldId: string;
-  /** Reports the live verdict to the parent so it can gate submit. `true` only
-   *  when the handle is a real, fresh, not-yet-submitted member. `false` covers
-   *  "not a member", "still checking", and "already submitted" — the
-   *  already-submitted case is also surfaced via `onAlreadySubmittedChange` so
-   *  the form can disable the button with a precise message instead of a
-   *  generic one. Pairing conflicts are NOT surfaced here — the form runs
-   *  them through its own debounced `/verify-pair` call. */
   onVerifiedChange?: (verified: boolean) => void;
-  /** Reports whether the handle is the *already submitted for today* kind
-   *  specifically. The form uses this to disable the submit button — a second
-   *  click would only 409 with no useful work — while the badge still shows
-   *  the green "already submitted" message above. `null` means "no answer
-   *  yet", matching the verdict callback's tri-state. */
   onAlreadySubmittedChange?: (alreadySubmitted: boolean | null) => void;
+  onBadgeKindChange?: (kind: HandleBadge["kind"]) => void;
+  inputRef?: React.Ref<HTMLInputElement>;
 }) {
   const abortRef = useRef<AbortController | null>(null);
 
@@ -131,9 +120,6 @@ export function DiscordHandleField({
       // out-of-order response for an older handle is simply never displayed.
       const settle = (next: HandleBadge) => setRemote({ handle, badge: next });
 
-      // Handle-only lookup — no email is forwarded here. The pairing check
-      // runs as its own debounced `/verify-pair` call in the form, once
-      // both field badges are green.
       try {
         const response = await fetch(
           `${API_BASE}/attendance/verify-user?username=${encodeURIComponent(handle)}`,
@@ -149,10 +135,6 @@ export function DiscordHandleField({
           return;
         }
 
-        // 400 is Zod rejecting the handle's shape — distinct from a handle
-        // that is simply not in the server. The form must distinguish "fix
-        // your typing" from "no such handle" but the field-level fix is the
-        // same.
         if (response.status === 400) {
           settle({ kind: "malformed" });
           return;
@@ -177,32 +159,20 @@ export function DiscordHandleField({
       }
     }, DEBOUNCE_MS);
 
-    // Cancel the pending debounce and abort any in-flight request on every
-    // keystroke and on unmount.
     return () => {
       clearTimeout(timer);
       abortRef.current?.abort();
     };
-    // Keyed on the *normalized* handle + email, so retyping either input
-    // (or the email being revised by the parent) re-fires the lookup with
-    // the new pairing. Without the email in the key, the badge would lag
-    // a corrected email by one debounce.
   }, [handle, malformed]);
 
-  // Report the verdict to the parent so it can gate submit. This effect runs
-  // synchronously (no debounce) — the parent already has the value, and a
-  // re-render here wants to flow through immediately.
+  // Report the verdict to the parent so it can gate submit.
   useEffect(() => {
     onVerifiedChange?.(isHandleVerified(badge));
-  }, [badge, onVerifiedChange]);
+    onBadgeKindChange?.(badge.kind);
+  }, [badge, onVerifiedChange, onBadgeKindChange]);
 
-  // Report the already-submitted verdict separately. A duplicate handle is the
-  // single case where the verdict callback (above) returns `false` but the
-  // form should *not* treat it as "not a member" — the button needs to be
-  // disabled with a specific message, not a generic "not found" one.
-  //   `duplicate` → alreadySubmitted: true  (button off, "already submitted")
-  //   anything else with an answer → alreadySubmitted: false
-  //   no answer yet (idle / checking / malformed) → alreadySubmitted: null
+  // Report the already-submitted verdict separately so a duplicate handle
+  // disables submit with an accurate message rather than "not a member".
   useEffect(() => {
     if (!onAlreadySubmittedChange) return;
     const tri = (() => {
@@ -212,152 +182,214 @@ export function DiscordHandleField({
         case "idle":
         case "checking":
         case "malformed":
-          // "No answer yet" — let the form fall back to its own gating logic.
           return null;
         default:
-          // verified / unknown / error — handle is either good to submit or
-          // already blocked for an unrelated reason. Already-submitted is no.
           return false;
       }
     })();
     onAlreadySubmittedChange(tri);
   }, [badge, onAlreadySubmittedChange]);
 
+  const hintId = `${fieldId}-hint`;
+  const errorId = `${fieldId}-error`;
   const statusId = `${fieldId}-status`;
-  const guidanceId = `${fieldId}-guidance`;
   const member = badge.kind === "verified" ? badge.payload.member : null;
+  const showStatus = badge.kind !== "idle";
+  const isInvalid = Boolean(
+    error || badge.kind === "malformed" || badge.kind === "unknown",
+  );
+
+  const describedBy = [
+    hintId,
+    error ? errorId : null,
+    showStatus ? statusId : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
-    <Field data-invalid={error || badge.kind === "malformed" ? true : undefined}>
-      <FieldLabel htmlFor={fieldId}>
-        Discord Username <span aria-hidden>*</span>
+    <Field data-invalid={isInvalid ? true : undefined}>
+      <FieldLabel htmlFor={fieldId} className="text-foreground font-semibold">
+        Discord username{" "}
+        <span aria-hidden="true" className="text-status-error">
+          *
+        </span>
       </FieldLabel>
 
-      <Input
-        id={fieldId}
-        name="discordUsername"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        required
-        // The student's own typing is never rewritten under their cursor —
-        // normalization happens on read, not on input.
-        autoCapitalize="none"
-        autoCorrect="off"
-        autoComplete="off"
-        spellCheck={false}
-        inputMode="text"
-        placeholder="rakib_dev"
-        aria-invalid={error || badge.kind === "malformed" ? true : undefined}
-        aria-describedby={`${statusId} ${guidanceId}`}
-      />
+      <FieldDescription id={hintId} className="text-xs">
+        The lowercase handle after{" "}
+        <code className="text-foreground font-mono">@</code> on your Discord
+        profile — not your display name.
+      </FieldDescription>
 
-      {/*
-        Error sits directly under the input — not after the live status text
-        below — so a server-side rejection reads as the field's own error and
-        stays anchored to the field instead of drifting toward the button.
-      */}
+      <InputGroup>
+        <InputGroupAddon
+          align="inline-start"
+          className="text-foreground pl-3 font-mono font-bold"
+        >
+          <span aria-hidden="true">@</span>
+        </InputGroupAddon>
+        <InputGroupInput
+          ref={inputRef}
+          id={fieldId}
+          name="discordUsername"
+          type="text"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          required
+          // The student's own typing is never rewritten under their cursor —
+          // normalization happens on read, not on input.
+          autoCapitalize="none"
+          autoCorrect="off"
+          autoComplete="off"
+          spellCheck={false}
+          inputMode="text"
+          enterKeyHint="done"
+          placeholder="rakib_dev"
+          aria-invalid={isInvalid ? true : false}
+          aria-describedby={describedBy}
+        />
+        {showStatus ? (
+          <InputGroupAddon align="inline-end" className="pr-3">
+            {badge.kind === "checking" ? (
+              <Loader2
+                aria-hidden="true"
+                className="text-muted-foreground size-4 animate-spin"
+              />
+            ) : badge.kind === "verified" || badge.kind === "duplicate" ? (
+              <CheckCircle2
+                aria-hidden="true"
+                className="text-status-success size-4"
+              />
+            ) : badge.kind === "malformed" || badge.kind === "unknown" ? (
+              <CircleAlert
+                aria-hidden="true"
+                className="text-status-error size-4"
+              />
+            ) : null}
+          </InputGroupAddon>
+        ) : null}
+      </InputGroup>
+
+      {/* Error sits directly under the input so a server-side rejection stays
+          anchored to the field. */}
       {error ? (
-        <FieldDescription className="text-destructive">{error}</FieldDescription>
+        <p
+          id={errorId}
+          className="text-status-error flex items-start gap-1.5 text-sm font-medium"
+        >
+          <CircleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+          <span>{error}</span>
+        </p>
       ) : null}
 
-      {/* Every asynchronous verdict is announced, not just shown. */}
-      <p
-        id={statusId}
-        role="status"
-        aria-live="polite"
-        className="flex items-start gap-2 text-sm"
-      >
-        {badge.kind === "checking" ? (
-          <>
-            <Loader2 aria-hidden className="mt-0.5 size-4 shrink-0 animate-spin" />
-            <span className="text-muted-foreground">Checking…</span>
-          </>
-        ) : null}
+      {/* Asynchronous verdicts announced once settled (not while spinning). */}
+      {showStatus ? (
+        <div
+          id={statusId}
+          role={badge.kind === "checking" ? undefined : "status"}
+          aria-live={badge.kind === "checking" ? "off" : "polite"}
+          className="text-sm"
+        >
+          {badge.kind === "checking" ? (
+            <p className="text-muted-foreground flex items-center gap-2 text-xs font-medium">
+              <Loader2
+                aria-hidden="true"
+                className="size-3.5 shrink-0 animate-spin"
+              />
+              <span>Checking Discord server directory…</span>
+            </p>
+          ) : null}
 
-        {badge.kind === "malformed" ? (
-          <>
-            <CircleAlert aria-hidden className="text-destructive mt-0.5 size-4 shrink-0" />
-            <span className="text-destructive">
-              Not in the right format. Type the lowercase name after the{" "}
-              <code>@</code> in your profile — lowercase letters, digits,{" "}
-              <code>_</code>, or <code>.</code> only (no two dots in a row).
-            </span>
-          </>
-        ) : null}
-
-        {badge.kind === "unknown" ? (
-          <>
-            <CircleAlert aria-hidden className="text-destructive mt-0.5 size-4 shrink-0" />
-            <span className="text-destructive">
-              This Discord username was not found in our Discord server. Check
-              the spelling, or join the server first.
-            </span>
-          </>
-        ) : null}
-
-        {badge.kind === "duplicate" ? (
-          <>
-            <CheckCircle2 aria-hidden className="text-success mt-0.5 size-4 shrink-0" />
-            <span className="text-success">
-              You have already submitted attendance for {badge.date}. Nothing
-              more to do.
-            </span>
-          </>
-        ) : null}
-
-        {badge.kind === "verified" && member ? (
-          <span className="text-success flex items-start gap-2">
-            <Avatar className="size-6">
-              {member.avatarUrl ? (
-                <AvatarImage src={member.avatarUrl} alt="" />
-              ) : null}
-              <AvatarFallback className="text-[10px]">
-                {member.discordUsername.slice(0, 2).toUpperCase()}
-              </AvatarFallback>
-            </Avatar>
-            <span className="flex flex-col gap-0.5">
+          {badge.kind === "malformed" ? (
+            <p className="text-status-error flex items-start gap-1.5 text-xs font-medium">
+              <CircleAlert
+                aria-hidden="true"
+                className="mt-0.5 size-3.5 shrink-0"
+              />
               <span>
-                ✅ {member.displayName ?? member.discordUsername} - found in
-                server.
+                Invalid format. Use 2–32 lowercase letters, digits,{" "}
+                <code className="font-mono">_</code>, or{" "}
+                <code className="font-mono">.</code> (no two dots in a row).
               </span>
-            </span>
-          </span>
-        ) : null}
+            </p>
+          ) : null}
 
-        {badge.kind === "error" ? (
-          <>
-            <CircleAlert aria-hidden className="text-muted-foreground mt-0.5 size-4 shrink-0" />
-            <span className="text-muted-foreground">
-              Can&apos;t verify right now
-              {badge.retryAfter
-                ? ` — try again in about ${badge.retryAfter} seconds`
-                : ""}
-              . You can still submit the form.
-            </span>
-          </>
-        ) : null}
-      </p>
+          {badge.kind === "unknown" ? (
+            <p className="border-border-coral bg-destructive/10 text-status-error flex items-start gap-2 rounded-xl border px-3 py-2 text-xs font-medium">
+              <CircleAlert
+                aria-hidden="true"
+                className="mt-0.5 size-4 shrink-0"
+              />
+              <span>
+                This Discord username was not found in our Discord server. Check
+                the spelling, or join the server first.
+              </span>
+            </p>
+          ) : null}
 
-      {/*
-        The "where to find your username" help is only useful *before* the
-        handle is verified — once the badge says ✅, the student has already
-        entered a valid handle. Pairing mismatches are surfaced by the
-        form's `/verify-pair` check, not by this field's badge.
-      */}
+          {badge.kind === "duplicate" ? (
+            <p className="border-border-sage bg-success/15 text-status-success flex items-start gap-2 rounded-xl border px-3 py-2 text-xs font-semibold">
+              <CheckCircle2
+                aria-hidden="true"
+                className="mt-0.5 size-4 shrink-0"
+              />
+              <span>
+                Attendance already submitted for{" "}
+                <span className="font-mono">{badge.date}</span>. Nothing more to
+                do here today.
+              </span>
+            </p>
+          ) : null}
+
+          {badge.kind === "verified" && member ? (
+            <div className="border-border-sage bg-success/15 flex items-center justify-between gap-3 rounded-xl border-2 px-3 py-2 shadow-[2px_2px_0_0_var(--border-sage)]">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <Avatar className="border-foreground size-8 shrink-0 border-2">
+                  {member.avatarUrl ? (
+                    <AvatarImage src={member.avatarUrl} alt="" />
+                  ) : null}
+                  <AvatarFallback className="font-mono text-[10px] font-bold">
+                    {member.discordUsername.slice(0, 2).toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="flex min-w-0 flex-col">
+                  <span className="text-foreground truncate text-xs font-bold">
+                    {member.displayName ?? member.discordUsername}
+                  </span>
+                  <span className="text-status-success truncate font-mono text-[11px] font-medium">
+                    @{member.discordUsername} · Found in server
+                  </span>
+                </div>
+              </div>
+              <Badge variant="success" className="shrink-0 font-mono text-[10px]">
+                <CheckCircle2 aria-hidden="true" />
+                VERIFIED
+              </Badge>
+            </div>
+          ) : null}
+
+          {badge.kind === "error" ? (
+            <p className="text-muted-foreground flex items-start gap-1.5 text-xs">
+              <CircleAlert
+                aria-hidden="true"
+                className="mt-0.5 size-3.5 shrink-0"
+              />
+              <span>
+                Can&apos;t verify right now
+                {badge.retryAfter
+                  ? ` — try again in about ${badge.retryAfter} seconds`
+                  : ""}
+                . You can still submit the form.
+              </span>
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* Only helpful before the handle resolves as verified or duplicate. */}
       {badge.kind === "verified" || badge.kind === "duplicate" ? null : (
-        <details id={guidanceId} className="text-muted-foreground/90 group">
-          <summary className="hover:text-foreground cursor-pointer list-none">
-            Where to find your username
-          </summary>
-          <div className="mt-2 flex flex-col gap-2 pl-4">
-            <span>
-              <strong>Where to find your username:</strong> In the Discord
-              app, click your profile picture in the bottom-left corner ➔
-              the lowercase name after the <code>@</code> shown under your
-              name.
-            </span>
-          </div>
-        </details>
+        <DiscordUsernameGuide className="mt-1" />
       )}
     </Field>
   );

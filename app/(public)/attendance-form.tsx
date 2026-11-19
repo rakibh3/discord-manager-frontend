@@ -1,11 +1,24 @@
 "use client";
 
-import { CheckCircle2, CircleAlert, Send } from "lucide-react";
+import {
+  CheckCircle2,
+  CircleAlert,
+  Clock,
+  Link2,
+  Loader2,
+  Send,
+} from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 
-import { DiscordHandleField } from "./discord-handle-field";
-import { EmailField } from "./email-field";
+import { DailyUpdateTemplateCard } from "./_components/daily-update-template-card";
+import {
+  DiscordHandleField,
+  type HandleBadge,
+} from "./discord-handle-field";
+import { EmailField, type EmailBadge } from "./email-field";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -20,7 +33,8 @@ import type {
   ApiResponse,
   SubmitAttendancePayload,
 } from "@/lib/api/types";
-import { formatCivilDate, formatDhaka } from "@/lib/dhaka-date";
+import { formatCivilDate, formatDhaka, formatWallClock } from "@/lib/dhaka-date";
+import { cn } from "@/lib/utils";
 import {
   ATTENDANCE_FIELD_COPY,
   attendanceSchema,
@@ -37,12 +51,13 @@ const PAIR_MISMATCH_MESSAGE =
 type Outcome =
   | { kind: "success"; payload: SubmitAttendancePayload }
   | { kind: "already"; message: string }
+  | { kind: "closed"; message: string }
   | { kind: "not-member" }
   | { kind: "not-enrolled"; message?: string }
   /** A 403 whose message names a pairing disagreement. The pre-submit pair
    *  check should make this unreachable through the form — it renders as a
    *  plain alert. Kept as a distinct outcome so the message text is never
-   *  confused with the "email not enrolled" refusal. */
+   *  confused with the "email not enrolled" or "window closed" refusals. */
   | { kind: "pairing"; message: string }
   | { kind: "rate-limited"; retryAfter: number | null }
   | { kind: "error"; message: string };
@@ -57,64 +72,52 @@ const EMPTY: Values = {
   discordUsername: "",
 };
 
-/** The email↔handle pairing verdict behind the submit button.
- *
- *  - `idle` — not applicable yet (a field is empty, malformed, or its own
- *    live badge has not come back verified; a pair cannot be checked with
- *    half a pair).
- *  - `checking` — both badges are green and the debounced pair request has
- *    not settled yet.
- *  - `match` — the pair is submittable as-is; the same predicate the
- *    submit path enforces, so the button's state matches what the server
- *    will decide one click later.
- *  - `mismatch` — a pairing disagreement was detected. The submit button
- *    stays disabled with a message naming the disagreement; the only way
- *    forward is entering the email and username that belong together.
- *  - `error` — the check could not run (network, rate limit). Not a
- *    blocker: the write path re-runs the pairing check server-side, so a
- *    network blip never locks a student out — same philosophy as the two
- *    field badges. */
+/** The email↔handle pairing verdict behind the submit button. */
 type PairState = "idle" | "checking" | "match" | "mismatch" | "error";
+
+type CheckStepStatus = "idle" | "checking" | "ok" | "error";
 
 export function AttendanceForm({
   emailVerificationRequired = true,
+  closeTime = null,
 }: {
   emailVerificationRequired?: boolean;
+  closeTime?: string | null;
 }) {
   const [values, setValues] = useState<Values>(EMPTY);
-  const [errors, setErrors] = useState<Partial<Record<keyof Values, string>>>({});
+  const [errors, setErrors] = useState<Partial<Record<keyof Values, string>>>(
+    {},
+  );
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // Live verification verdicts from the email and handle fields. `null` means
-  // "no answer yet" — the user has not finished typing or the debounce has not
-  // fired. Both must be `true` before the pairing check even runs.
+  // Live verification verdicts from the email and handle fields.
   const [handleVerified, setHandleVerified] = useState<boolean | null>(null);
-  // Tri-state for the handle's "already submitted" verdict, reported separately
-  // from `handleVerified` so a duplicate result can disable the button with a
-  // precise message (the badge above already shows the green "already
-  // submitted" line). `null` means "no answer yet" — the form should not block
-  // on this signal alone; `handleVerified` already covers the gating path.
   const [handleAlreadySubmitted, setHandleAlreadySubmitted] = useState<
     boolean | null
   >(null);
   const [emailVerified, setEmailVerified] = useState<boolean | null>(null);
 
-  // The pairing verdict, tagged with the input pair it belongs to — same
-  // pattern as the two field components, so an out-of-order answer for an
-  // older input pair is simply never displayed.
+  // Badge kinds for the top-of-form verification readiness strip.
+  const [emailBadgeKind, setEmailBadgeKind] = useState<EmailBadge["kind"]>(
+    emailVerificationRequired ? "idle" : "gate-off",
+  );
+  const [handleBadgeKind, setHandleBadgeKind] =
+    useState<HandleBadge["kind"]>("idle");
+
+  // The pairing verdict, tagged with the input pair it belongs to.
   const [pairRemote, setPairRemote] = useState<{
     key: string;
     state: PairState;
   } | null>(null);
 
+  const formHeadingId = useId();
   const emailId = useId();
   const handleId = useId();
 
-  // Holds the Alert element ref so a failed submit can move focus to it —
-  // keyboard and screen-reader users otherwise have to scroll back up to read
-  // what the server said, which is the entire point of the alert.
   const alertRef = useRef<HTMLDivElement | null>(null);
+  const emailInputRef = useRef<HTMLInputElement | null>(null);
+  const handleInputRef = useRef<HTMLInputElement | null>(null);
   const pairAbortRef = useRef<AbortController | null>(null);
 
   const setField = (field: keyof Values, value: string) => {
@@ -122,66 +125,36 @@ export function AttendanceForm({
     setErrors((current) => ({ ...current, [field]: undefined }));
   };
 
-  // Reset the verdict any time the user starts typing again — the previous
-  // "good" answer was for the value before this keystroke, not for the value
-  // after. Without this, swapping a verified handle for an unknown one would
-  // leave the submit button enabled until the next debounce settles.
   const setHandleField = (value: string) => {
     setField("discordUsername", value);
-    // Reset every verdict that referenced the previous handle — including the
-    // duplicate verdict, which was for the *prior* handle and would otherwise
-    // leave the button stuck on "already submitted" if the new handle is a
-    // fresh, not-yet-submitted member.
     setHandleVerified(null);
     setHandleAlreadySubmitted(null);
-    // The pairing verdict was for the prior input pair too — nothing to
-    // clear on the outcome side; every outcome is tied to a submit attempt,
-    // which resets it itself.
   };
+
   const setEmailField = (value: string) => {
     setField("email", value);
     setEmailVerified(null);
   };
 
-  // The normalized input pair the pairing verdict is keyed on. Same
-  // normalization the server applies, so a value re-checked with different
-  // casing or padding does not spend another request.
   const normalizedEmail = values.email.trim().toLowerCase();
   const normalizedHandle = normalizeDiscordUsername(values.discordUsername);
   const pairKey = `${normalizedEmail}|${normalizedHandle}`;
 
-  // The pair check only runs when BOTH individual badges are green — a pair
-  // cannot be checked with half a pair, and the individual failures already
-  // block the button with a more precise message.
   const pairEligible = handleVerified === true && emailVerified === true;
 
   const pairState: PairState = (() => {
     if (!pairEligible) return "idle";
-
     return pairRemote?.key === pairKey ? pairRemote.state : "checking";
   })();
 
-  // What is currently blocking submit, in display order. Returns the first
-  // active block, or `null` when nothing is in the way. Used by the helper
-  // text under the submit button so the student always knows what to fix.
   const blockingReason = ((): string | null => {
-    // "Already submitted" wins over every other verdict — the handle field's
-    // green badge already says it, but the gating text under the button needs
-    // to repeat it so a student scanning for "why is the button off?" lands
-    // on the right reason. Checked before "not a member" because a typing
-    // student with a stale `unknown` verdict on a duplicate handle would
-    // otherwise see the wrong copy.
     if (handleAlreadySubmitted === true) {
       return "You have already submitted attendance for today.";
     }
 
-    // Required-field checks first — a missing value blocks before any
-    // verification could even fire.
     if (!values.email.trim()) return "Enter your email address.";
     if (!values.discordUsername.trim()) return "Enter your Discord username.";
 
-    // Schema-level rules (regex). The fields above will already have been
-    // entered; this catches a malformed email or username.
     const parsed = attendanceSchema.safeParse(values);
     if (!parsed.success) {
       const first = parsed.error.issues[0];
@@ -191,46 +164,30 @@ export function AttendanceForm({
         return "Fix the Discord username format.";
     }
 
-    // Live verification — both must come back as `true` before the pairing
-    // check even runs. `null` means the debounce is still pending or the
-    // request failed without a verdict; either way, do not let the button
-    // fire yet.
-    if (handleVerified === null)
-      return "Checking Discord handle…";
-    if (!handleVerified)
+    if (handleVerified === null) return "Checking Discord handle…";
+    if (!handleVerified) {
       return "Discord username not found in the server. Enter the correct username.";
-    if (emailVerified === null)
-      return "Checking email…";
-    if (!emailVerified)
+    }
+    if (emailVerified === null) return "Checking email…";
+    if (!emailVerified) {
       return "Email not on enrolment roster. Use the email you registered with for the course.";
+    }
 
-    // The pairing gate. This is the check that decides whether these two
-    // values describe one person in our records — attendance can be
-    // submitted only when the pair agrees. An `error` state is NOT a
-    // blocker: the write path re-runs the pairing check server-side, so a
-    // network blip here never locks a student out.
-    if (pairState === "checking")
+    if (pairState === "checking") {
       return "Checking that your email and Discord username match…";
+    }
     if (pairState === "mismatch") return PAIR_MISMATCH_MESSAGE;
 
     return null;
   })();
 
   const canSubmit = blockingReason === null && !submitting;
-
-  // A mismatch is the one blocker that is an error rather than a "still
-  // working on it" hint, so the line under the button is drawn as one.
   const blockedByMismatch = blockingReason === PAIR_MISMATCH_MESSAGE;
 
-  // The debounced, browser-direct pairing check. Fires only when the pair
-  // is eligible (both badges green) and the settled input pair has no
-  // verdict yet. Aborts stale requests and keys every result on the input
-  // pair it was requested for, so a slow answer for an older pair can never
-  // overwrite the verdict for the current one.
+  // Debounced, browser-direct pairing check once both field badges are green.
   useEffect(() => {
     if (!pairEligible || !API_BASE) {
       pairAbortRef.current?.abort();
-
       return;
     }
 
@@ -248,11 +205,8 @@ export function AttendanceForm({
           { signal: controller.signal, cache: "no-store" },
         );
 
-        // A rate-limited or failed check is an `error`, not a blocker — the
-        // submit path re-runs the pairing check server-side.
         if (!response.ok) {
           settle("error");
-
           return;
         }
 
@@ -271,20 +225,9 @@ export function AttendanceForm({
       clearTimeout(timer);
       pairAbortRef.current?.abort();
     };
-    // Keyed on the settled pair + eligibility, so retyping either input — or
-    // an individual badge flipping — re-fires the check with the new pair.
-  }, [
-    pairKey,
-    pairEligible,
-    normalizedEmail,
-    normalizedHandle,
-  ]);
+  }, [pairKey, pairEligible, normalizedEmail, normalizedHandle]);
 
-  // After a server-side failure, move keyboard focus to the top-of-form
-  // alert so the next step is announced and reachable without scrolling.
-  // Only fires on the failure branches — a successful submit replaces the
-  // form with the success card, and moving focus mid-edit on every keystroke
-  // would be hostile.
+  // Move focus to the top-of-form alert on server-side outcomes.
   useEffect(() => {
     if (!outcome) return;
     if (outcome.kind === "success") return;
@@ -295,22 +238,23 @@ export function AttendanceForm({
     event?.preventDefault();
     if (submitting) return;
 
-    // Defence in depth: even with the button disabled, a paste-then-submit
-    // keystroke or browser autofill could bypass it. Re-check the live
-    // verdicts here so a click that somehow fires still bounces.
+    // Defence in depth against paste-then-enter or autofill bypassing disabled state.
+    if (emailVerified !== true) {
+      setErrors((current) => ({
+        ...current,
+        email:
+          "Verify an enrolled email first — wait for the confirmation next to the field.",
+      }));
+      emailInputRef.current?.focus();
+      return;
+    }
     if (handleVerified !== true) {
       setErrors((current) => ({
         ...current,
         discordUsername:
-          "Verify a live Discord username first — wait for the ✅ next to the handle.",
+          "Verify a live Discord username first — wait for the confirmation next to the handle.",
       }));
-      return;
-    }
-    if (emailVerified !== true) {
-      setErrors((current) => ({
-        ...current,
-        email: "Verify an enrolled email first — wait for the ✅ next to the field.",
-      }));
+      handleInputRef.current?.focus();
       return;
     }
     if (pairState === "checking") {
@@ -334,6 +278,8 @@ export function AttendanceForm({
         next[field] ??= issue.message;
       }
       setErrors(next);
+      if (next.email) emailInputRef.current?.focus();
+      else if (next.discordUsername) handleInputRef.current?.focus();
       return;
     }
 
@@ -357,15 +303,14 @@ export function AttendanceForm({
       });
 
       if (response.status === 201) {
-        const json = (await response.json()) as ApiResponse<SubmitAttendancePayload>;
+        const json =
+          (await response.json()) as ApiResponse<SubmitAttendancePayload>;
         setOutcome({ kind: "success", payload: json.data });
         return;
       }
 
       if (response.status === 429) {
         const reset = Number(response.headers.get("RateLimit-Reset"));
-        // No auto-retry: the per-IP budget is the whole budget, and the
-        // entered values stay on screen so nothing has to be retyped.
         setOutcome({
           kind: "rate-limited",
           retryAfter: Number.isFinite(reset) && reset > 0 ? reset : null,
@@ -373,24 +318,29 @@ export function AttendanceForm({
         return;
       }
 
-      const body = (await response.json().catch(() => null)) as
-        | { message?: string; errorDetails?: { issues?: { path: string; message: string }[] } }
-        | null;
+      const body = (await response.json().catch(() => null)) as {
+        message?: string;
+        errorDetails?: { issues?: { path: string; message: string }[] };
+      } | null;
 
-      // 403 splits into two cases that point at different fields:
-      //   - the email is not on the enrolled student list (when verification is armed)
-      //   - the email↔handle pairing disagrees
-      // The two are decided by the server's message text, not by the status
-      // code. The pairing branch should be unreachable through this form —
-      // the submit button is gated on the pre-submit pair check — but a
-      // direct request or a race (a pairing changed between check and
-      // submit) can still land here, and the student needs the refusal
-      // explained rather than a modal.
+      // 403 covers three distinct server refusals:
+      //   1. the attendance window closed between page load and submit
+      //   2. the email↔handle pairing disagrees
+      //   3. the email is not on the enrolled student roster
       if (response.status === 403) {
         const message = body?.message ?? "";
-        const isPairingMismatch = /do not match our records/i.test(message);
 
-        if (isPairingMismatch) {
+        if (/window is currently closed/i.test(message)) {
+          setOutcome({
+            kind: "closed",
+            message:
+              message ||
+              "The attendance submission window is currently closed.",
+          });
+          return;
+        }
+
+        if (/do not match our records/i.test(message)) {
           setOutcome({
             kind: "pairing",
             message: message || PAIR_MISMATCH_MESSAGE,
@@ -410,7 +360,6 @@ export function AttendanceForm({
         return;
       }
 
-      // On the write path a 404 is a genuine failure (Discord handle not found in the server).
       if (response.status === 404) {
         setOutcome({ kind: "not-member" });
         setErrors((current) => ({
@@ -421,7 +370,6 @@ export function AttendanceForm({
         return;
       }
 
-      // 409 means the attendance is recorded. That is a good outcome.
       if (response.status === 409) {
         setOutcome({
           kind: "already",
@@ -431,8 +379,6 @@ export function AttendanceForm({
       }
 
       if (response.status === 400 && body?.errorDetails?.issues?.length) {
-        // Map the server's issues onto fields using our own copy — its
-        // messages arrive Title Cased Word By Word and read wrong here.
         const next: Partial<Record<keyof Values, string>> = {};
         for (const issue of body.errorDetails.issues) {
           const field = (issue.path.charAt(0).toLowerCase() +
@@ -442,7 +388,9 @@ export function AttendanceForm({
           }
         }
         setErrors(next);
-        if (Object.keys(next).length === 0) {
+        if (next.email) emailInputRef.current?.focus();
+        else if (next.discordUsername) handleInputRef.current?.focus();
+        else {
           setOutcome({
             kind: "error",
             message: body.message ?? "Please check what you entered.",
@@ -478,85 +426,171 @@ export function AttendanceForm({
     );
   }
 
+  // Derive visual step statuses for the live readiness bar.
+  const emailStepStatus: CheckStepStatus = (() => {
+    if (!emailVerificationRequired) {
+      if (!values.email.trim()) return "idle";
+      return attendanceSchema.shape.email.safeParse(values.email).success
+        ? "ok"
+        : "error";
+    }
+    if (emailBadgeKind === "verified") return "ok";
+    if (emailBadgeKind === "checking") return "checking";
+    if (emailBadgeKind === "malformed" || emailBadgeKind === "not-enrolled") {
+      return "error";
+    }
+    return "idle";
+  })();
+
+  const handleStepStatus: CheckStepStatus = (() => {
+    if (handleBadgeKind === "verified" || handleBadgeKind === "duplicate") {
+      return "ok";
+    }
+    if (handleBadgeKind === "checking") return "checking";
+    if (handleBadgeKind === "malformed" || handleBadgeKind === "unknown") {
+      return "error";
+    }
+    return "idle";
+  })();
+
+  const pairStepStatus: CheckStepStatus = (() => {
+    if (pairState === "match") return "ok";
+    if (pairState === "checking") return "checking";
+    if (pairState === "mismatch") return "error";
+    return "idle";
+  })();
+
   return (
-    <>
-    <Card>
-      <CardHeader>
-        <CardTitle>Daily Attendance</CardTitle>
-        <CardDescription>
-          Submit once per day. Only your email and Discord username are needed.
-        </CardDescription>
+    <Card accent="lilac" className="gap-5 py-5 sm:py-6">
+      <CardHeader className="border-border-muted border-b px-4 pb-4 sm:px-6">
+        <div className="flex flex-col gap-1">
+          <CardTitle>
+            <h2 id={formHeadingId} className="text-xl">
+              Check-in form
+            </h2>
+          </CardTitle>
+          <CardDescription>
+            Submit once per day with your email and Discord username.
+            {closeTime
+              ? ` Today's window closes at ${formatWallClock(closeTime)} (Dhaka).`
+              : ""}
+          </CardDescription>
+        </div>
       </CardHeader>
 
-      <CardContent>
-        <form onSubmit={submit} noValidate>
+      <CardContent className="flex flex-col gap-5 px-4 sm:px-6">
+        {/* Live 3-gate verification strip */}
+        <ol
+          aria-label="Live verification checks"
+          className="grid grid-cols-3 gap-1.5 sm:gap-2"
+        >
+          <CheckStepChip
+            step="01"
+            label={emailVerificationRequired ? "Roster email" : "Email"}
+            shortLabel="Email"
+            status={emailStepStatus}
+          />
+          <CheckStepChip
+            step="02"
+            label={
+              handleBadgeKind === "duplicate" ? "Already in" : "Discord server"
+            }
+            shortLabel={handleBadgeKind === "duplicate" ? "Done" : "Discord"}
+            status={handleStepStatus}
+          />
+          <CheckStepChip
+            step="03"
+            label="Pair match"
+            shortLabel="Match"
+            status={pairStepStatus}
+          />
+        </ol>
+
+        <form
+          onSubmit={submit}
+          noValidate
+          aria-labelledby={formHeadingId}
+          className="public-form"
+        >
           <FieldGroup>
-            {/*
-              The single alert slot at the top of the form. Only one
-              outcome fires at a time, so wrapping the cases in one focusable
-              region lets the failure effect land keyboard focus on whatever
-              message is currently showing. `tabIndex={-1}` keeps it
-              focusable programmatically without inserting it into the tab
-              order (the buttons below are the next step in the order).
-            */}
-            <div
-              ref={alertRef}
-              tabIndex={-1}
-              className="focus:outline-none"
-            >
-            {outcome?.kind === "already" ? (
-              <Alert variant="success">
-                <AlertTitle>Already recorded</AlertTitle>
-                <AlertDescription>
-                  {outcome.message} Your attendance is already recorded — no further action needed.
-                </AlertDescription>
-              </Alert>
-            ) : null}
+            {/* Single focusable alert slot for server outcomes. */}
+            <div ref={alertRef} tabIndex={-1} className="focus:outline-none">
+              {outcome?.kind === "already" ? (
+                <Alert variant="success">
+                  <CheckCircle2 aria-hidden="true" />
+                  <AlertTitle>Already recorded</AlertTitle>
+                  <AlertDescription>
+                    {outcome.message} Your attendance is already recorded — no
+                    further action needed on this form.
+                  </AlertDescription>
+                </Alert>
+              ) : null}
 
-            {outcome?.kind === "not-member" ? (
-              <Alert variant="destructive">
-                <AlertTitle>Not in the Discord server</AlertTitle>
-                <AlertDescription>
-                  This Discord username is not in our Discord server. Join the server first, then try again.
-                </AlertDescription>
-              </Alert>
-            ) : null}
+              {outcome?.kind === "closed" ? (
+                <Alert variant="destructive" className="text-status-error">
+                  <Clock aria-hidden="true" />
+                  <AlertTitle>Attendance window closed</AlertTitle>
+                  <AlertDescription className="text-status-error">
+                    {outcome.message}
+                  </AlertDescription>
+                </Alert>
+              ) : null}
 
-            {outcome?.kind === "not-enrolled" ? (
-              <Alert variant="destructive">
-                <AlertTitle>Email not enrolled</AlertTitle>
-                <AlertDescription>
-                  {outcome.message ??
-                    "This email is not on the enrolment roster. Use the email you registered with for the course."}
-                </AlertDescription>
-              </Alert>
-            ) : null}
+              {outcome?.kind === "not-member" ? (
+                <Alert variant="destructive" className="text-status-error">
+                  <CircleAlert aria-hidden="true" />
+                  <AlertTitle>Not in the Discord server</AlertTitle>
+                  <AlertDescription className="text-status-error">
+                    This Discord username is not in our Discord server. Join the
+                    server first, then try again.
+                  </AlertDescription>
+                </Alert>
+              ) : null}
 
-            {outcome?.kind === "pairing" ? (
-              <Alert variant="destructive">
-                <AlertTitle>Email and Discord username do not match</AlertTitle>
-                <AlertDescription>{outcome.message}</AlertDescription>
-              </Alert>
-            ) : null}
+              {outcome?.kind === "not-enrolled" ? (
+                <Alert variant="destructive" className="text-status-error">
+                  <CircleAlert aria-hidden="true" />
+                  <AlertTitle>Email not enrolled</AlertTitle>
+                  <AlertDescription className="text-status-error">
+                    {outcome.message ??
+                      "This email is not on the enrolment roster. Use the email you registered with for the course."}
+                  </AlertDescription>
+                </Alert>
+              ) : null}
 
-            {outcome?.kind === "rate-limited" ? (
-              <Alert variant="destructive">
-                <AlertTitle>Too many attempts</AlertTitle>
-                <AlertDescription>
-                  Please wait{" "}
-                  {outcome.retryAfter
-                    ? `about ${outcome.retryAfter} seconds`
-                    : "a few minutes"}{" "}
-                  and try again.
-                </AlertDescription>
-              </Alert>
-            ) : null}
+              {outcome?.kind === "pairing" ? (
+                <Alert variant="destructive" className="text-status-error">
+                  <CircleAlert aria-hidden="true" />
+                  <AlertTitle>Email and Discord username do not match</AlertTitle>
+                  <AlertDescription className="text-status-error">
+                    {outcome.message}
+                  </AlertDescription>
+                </Alert>
+              ) : null}
 
-            {outcome?.kind === "error" ? (
-              <Alert variant="destructive" role="alert">
-                <AlertDescription>{outcome.message}</AlertDescription>
-              </Alert>
-            ) : null}
+              {outcome?.kind === "rate-limited" ? (
+                <Alert variant="destructive" className="text-status-error">
+                  <CircleAlert aria-hidden="true" />
+                  <AlertTitle>Too many attempts</AlertTitle>
+                  <AlertDescription className="text-status-error">
+                    Please wait{" "}
+                    {outcome.retryAfter
+                      ? `about ${outcome.retryAfter} seconds`
+                      : "a few minutes"}{" "}
+                    and try again.
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+
+              {outcome?.kind === "error" ? (
+                <Alert variant="destructive" className="text-status-error">
+                  <CircleAlert aria-hidden="true" />
+                  <AlertTitle>Could not submit</AlertTitle>
+                  <AlertDescription className="text-status-error">
+                    {outcome.message}
+                  </AlertDescription>
+                </Alert>
+              ) : null}
             </div>
 
             <EmailField
@@ -565,7 +599,9 @@ export function AttendanceForm({
               onChange={setEmailField}
               error={errors.email}
               onVerifiedChange={setEmailVerified}
+              onBadgeKindChange={setEmailBadgeKind}
               emailVerificationRequired={emailVerificationRequired}
+              inputRef={emailInputRef}
             />
 
             <DiscordHandleField
@@ -574,55 +610,74 @@ export function AttendanceForm({
               onChange={setHandleField}
               error={errors.discordUsername}
               onVerifiedChange={setHandleVerified}
-              // The duplicate verdict is reported separately so the button
-              // can be disabled with a precise "already submitted" message
-              // instead of the generic "not a member" one. The green badge
-              // above the field is still the primary signal. The email↔handle
-              // pairing check is deliberately NOT done on this field's live
-              // verify — it runs as its own debounced `/verify-pair` call
-              // below.
               onAlreadySubmittedChange={setHandleAlreadySubmitted}
+              onBadgeKindChange={setHandleBadgeKind}
+              inputRef={handleInputRef}
             />
 
-            <Field>
-              {/*
-                The button is disabled until the Discord handle and (when the
-                roster gate is armed) the email are confirmed verified by the
-                live badges AND the email↔handle pair check comes back clean.
-                `blockingReason` is the single source of truth for what is
-                gating the form, and is also rendered below the button so a
-                locked-out student always knows what to fix. Submit also
-                re-checks every verdict — defence in depth against
-                paste-and-click or browser autofill submitting the form
-                before a callback fires.
-              */}
-              <Button type="submit" size="lg" disabled={!canSubmit}>
+            {/* Positive pair match confirmation right above submit */}
+            {pairState === "match" && !submitting ? (
+              <p
+                role="status"
+                aria-live="polite"
+                className="border-border-sage bg-success/15 text-status-success flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold"
+              >
+                <Link2 aria-hidden="true" className="size-4 shrink-0" />
+                <span>
+                  Email and Discord account verified together — ready to submit.
+                </span>
+              </p>
+            ) : null}
+
+            <Field className="pt-1">
+              <Button
+                type="submit"
+                size="lg"
+                disabled={!canSubmit}
+                className="w-full"
+              >
                 {submitting ? (
                   <Spinner data-icon="inline-start" />
                 ) : (
-                  <Send data-icon="inline-start" />
+                  <Send data-icon="inline-start" aria-hidden="true" />
                 )}
-                {submitting ? "Submitting…" : "Submit Attendance"}
+                {submitting ? "Submitting attendance…" : "Submit Attendance"}
               </Button>
 
-              {/*
-                Helper text under the button. Always rendered (when there is
-                something to say) so the student is not left wondering why
-                the button is unresponsive. Uses the same `aria-live="polite"`
-                rhythm as the field badges above.
-              */}
               {blockingReason && !submitting ? (
                 <p
                   id="submit-blocking"
-                  role="status"
-                  aria-live="polite"
-                  className={`flex items-start gap-2 text-sm ${
+                  role={
+                    blockingReason.endsWith("…") ? undefined : "status"
+                  }
+                  aria-live={
+                    blockingReason.endsWith("…") ? "off" : "polite"
+                  }
+                  className={cn(
+                    "flex items-start gap-2 rounded-xl border px-3 py-2 text-xs font-medium",
                     blockedByMismatch
-                      ? "text-destructive"
-                      : "text-muted-foreground"
-                  }`}
+                      ? "border-border-coral bg-destructive/10 text-status-error"
+                      : handleAlreadySubmitted
+                        ? "border-border-sage bg-success/15 text-status-success"
+                        : "border-border-muted bg-muted/50 text-muted-foreground",
+                  )}
                 >
-                  <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
+                  {handleAlreadySubmitted ? (
+                    <CheckCircle2
+                      aria-hidden="true"
+                      className="mt-0.5 size-4 shrink-0"
+                    />
+                  ) : blockingReason.endsWith("…") ? (
+                    <Loader2
+                      aria-hidden="true"
+                      className="mt-0.5 size-4 shrink-0 animate-spin"
+                    />
+                  ) : (
+                    <CircleAlert
+                      aria-hidden="true"
+                      className="mt-0.5 size-4 shrink-0"
+                    />
+                  )}
                   <span>{blockingReason}</span>
                 </p>
               ) : null}
@@ -631,7 +686,46 @@ export function AttendanceForm({
         </form>
       </CardContent>
     </Card>
-    </>
+  );
+}
+
+function CheckStepChip({
+  step,
+  label,
+  shortLabel,
+  status,
+}: {
+  step: string;
+  label: string;
+  shortLabel: string;
+  status: CheckStepStatus;
+}) {
+  return (
+    <li
+      className={cn(
+        "flex items-center justify-center gap-1.5 rounded-xl border-2 px-2 py-2 text-xs transition-colors sm:justify-start sm:px-2.5",
+        status === "ok" &&
+          "border-border-sage bg-success/15 text-status-success font-semibold",
+        status === "error" &&
+          "border-border-coral bg-destructive/10 text-status-error font-semibold",
+        status === "checking" &&
+          "border-border-yellow bg-highlight/20 text-foreground font-medium",
+        status === "idle" &&
+          "border-border-muted bg-muted/40 text-muted-foreground",
+      )}
+    >
+      {status === "ok" ? (
+        <CheckCircle2 aria-hidden="true" className="size-3.5 shrink-0" />
+      ) : status === "error" ? (
+        <CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />
+      ) : status === "checking" ? (
+        <Loader2 aria-hidden="true" className="size-3.5 shrink-0 animate-spin" />
+      ) : (
+        <span className="font-mono text-[10px] font-bold">{step}</span>
+      )}
+      <span className="hidden truncate sm:inline">{label}</span>
+      <span className="truncate sm:hidden">{shortLabel}</span>
+    </li>
   );
 }
 
@@ -646,27 +740,73 @@ function SuccessCard({
   submittedAt: string;
   member: SubmitAttendancePayload["member"];
 }) {
+  const headingRef = useRef<HTMLHeadingElement | null>(null);
+
+  useEffect(() => {
+    const previousTitle = document.title;
+    document.title = "Attendance Recorded · Discord Manager";
+    headingRef.current?.focus();
+    return () => {
+      document.title = previousTitle;
+    };
+  }, []);
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-success flex items-center gap-2">
-          <CheckCircle2 aria-hidden />
-          Attendance recorded
-        </CardTitle>
+    <Card accent="sage" className="gap-5 py-5 sm:py-6">
+      <CardHeader className="border-border-muted border-b px-4 pb-4 sm:px-6">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="success" className="font-mono text-[11px]">
+            <CheckCircle2 aria-hidden="true" />
+            ATTENDANCE RECORDED
+          </Badge>
+        </div>
+        <h2
+          ref={headingRef}
+          tabIndex={-1}
+          className="font-heading mt-1 text-2xl font-bold tracking-tight focus:outline-none"
+        >
+          You&apos;re checked in for today!
+        </h2>
+        <CardDescription>
+          Part 1 of 2 is done. Remember to post your learning update in Discord
+          before the window closes.
+        </CardDescription>
       </CardHeader>
-      <CardContent className="flex flex-col gap-2 text-sm">
-        <p>
-          Your attendance for <strong>{formatCivilDate(attendanceDate)}</strong>{" "}
-          has been recorded for{" "}
-          <strong className="text-foreground">
-            {member.displayName ?? member.discordUsername}
-          </strong>{" "}
-          ({member.discordUsername}) at {formatDhaka(submittedAt, "time")}.
-        </p>
-        <p className="text-muted-foreground">
-          If a <code>#daily-update</code> post is still pending, please post
-          it.
-        </p>
+
+      <CardContent className="flex flex-col gap-5 px-4 text-sm sm:px-6">
+        {/* Verified member + timestamp receipt */}
+        <div className="border-foreground bg-muted/50 flex flex-col gap-3 rounded-xl border-2 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center gap-3">
+            <Avatar className="border-foreground size-10 shrink-0 border-2">
+              {member.avatarUrl ? (
+                <AvatarImage src={member.avatarUrl} alt="" />
+              ) : null}
+              <AvatarFallback className="font-mono text-xs font-bold">
+                {member.discordUsername.slice(0, 2).toUpperCase()}
+              </AvatarFallback>
+            </Avatar>
+            <div className="flex min-w-0 flex-col">
+              <span className="font-heading truncate text-base font-bold">
+                {member.displayName ?? member.discordUsername}
+              </span>
+              <span className="text-muted-foreground truncate font-mono text-xs">
+                @{member.discordUsername}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2 sm:justify-end">
+            <Badge variant="outline" className="font-mono text-[11px]">
+              {formatCivilDate(attendanceDate)}
+            </Badge>
+            <Badge variant="yellow" className="font-mono text-[11px]">
+              {formatDhaka(submittedAt, "time")}
+            </Badge>
+          </div>
+        </div>
+
+        {/* Inline copyable #daily-update template for Step 2 */}
+        <DailyUpdateTemplateCard today={attendanceDate} compact />
       </CardContent>
     </Card>
   );

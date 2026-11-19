@@ -1,5 +1,14 @@
-import { CalendarClock, Clock } from "lucide-react";
+import {
+  ArrowRight,
+  CalendarClock,
+  Clock,
+  Lock,
+  PauseCircle,
+} from "lucide-react";
+import Link from "next/link";
 
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -12,7 +21,7 @@ import { formatDhaka, formatWallClock } from "@/lib/dhaka-date";
 import { formatWeekdays } from "@/lib/validation/schedule";
 
 /** What a student sees outside the submission window — a meaningful message,
- *  not a 404. Bilingual, because "closed" must not be misread as "broken". */
+ *  not a 404, so "closed" is never misread as "broken". */
 export function WindowClosed({
   attendanceWindow,
 }: {
@@ -23,60 +32,100 @@ export function WindowClosed({
   const paused = !attendanceWindow.enabled;
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-lg">
-          <Clock aria-hidden className="size-6" />
-          {paused ? "Attendance is paused" : "Attendance is closed right now"}
+    <Card accent="coral" className="gap-5 py-5 sm:py-6">
+      <CardHeader className="border-border-muted border-b px-4 pb-4 sm:px-6">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="destructive" className="font-mono text-[11px]">
+            {paused ? (
+              <PauseCircle aria-hidden="true" />
+            ) : (
+              <Lock aria-hidden="true" />
+            )}
+            {paused ? "ATTENDANCE PAUSED" : "OUTSIDE WINDOW"}
+          </Badge>
+        </div>
+
+        <CardTitle className="mt-1">
+          <h2 className="text-xl">
+            {paused ? "Attendance is paused" : "Attendance is closed right now"}
+          </h2>
         </CardTitle>
-        <CardDescription className="text-base">
+        <CardDescription className="text-sm">
           {paused
-            ? "Daily attendance is paused right now."
-            : "It's not the attendance submission window right now. Please come back during the scheduled hours."}
+            ? "An administrator has paused the daily attendance schedule."
+            : "This form only accepts submissions during the scheduled evening window."}
         </CardDescription>
       </CardHeader>
 
-      <CardContent className="flex flex-col gap-4 text-base">
+      <CardContent className="flex flex-col gap-4 px-4 text-sm sm:px-6">
         {paused ? (
-          <p className="text-muted-foreground">
-            An admin has turned the daily attendance window off. It will be
-            announced in Discord when it starts again — there is nothing you
-            need to do in the meantime.
+          <p className="text-muted-foreground leading-relaxed">
+            It will be announced in the Discord server when daily attendance
+            resumes — there is nothing you need to do in the meantime.
           </p>
         ) : (
           <>
-            <div className="bg-muted/60 flex flex-col gap-1 rounded-md p-3">
-              <p className="flex items-center gap-2 font-medium">
-                <CalendarClock aria-hidden className="size-5" />
-                Open from {formatWallClock(attendanceWindow.openTime)} to{" "}
-                {formatWallClock(attendanceWindow.closeTime)}
-              </p>
-              <p className="text-muted-foreground text-sm">
-                {formatWeekdays(attendanceWindow.daysOfWeek)} · all times Asia/Dhaka
-              </p>
-            </div>
+            <dl className="border-foreground bg-muted/50 grid gap-3 rounded-xl border-2 p-4 sm:grid-cols-2">
+              <div className="flex flex-col gap-0.5">
+                <dt className="text-muted-foreground flex items-center gap-1.5 font-mono text-[11px] uppercase">
+                  <Clock aria-hidden="true" className="size-3.5" />
+                  Daily hours
+                </dt>
+                <dd className="font-mono text-sm font-bold">
+                  {formatWallClock(attendanceWindow.openTime)} –{" "}
+                  {formatWallClock(attendanceWindow.closeTime)}
+                </dd>
+              </div>
+
+              <div className="flex flex-col gap-0.5">
+                <dt className="text-muted-foreground font-mono text-[11px] uppercase">
+                  Active days
+                </dt>
+                <dd className="font-medium">
+                  {formatWeekdays(attendanceWindow.daysOfWeek)} · Asia/Dhaka
+                </dd>
+              </div>
+            </dl>
 
             {attendanceWindow.nextOpenAt ? (
-              <p>
-                <span className="text-muted-foreground">Opens next:</span>{" "}
-                <strong>{formatDhaka(attendanceWindow.nextOpenAt)}</strong>
-              </p>
+              <div className="border-foreground bg-highlight/20 flex items-center gap-3 rounded-xl border-2 p-3.5">
+                <CalendarClock
+                  aria-hidden="true"
+                  className="size-5 shrink-0"
+                />
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-muted-foreground font-mono text-[11px] font-semibold uppercase">
+                    Opens next (Asia/Dhaka)
+                  </span>
+                  <strong className="font-mono text-sm">
+                    {formatDhaka(attendanceWindow.nextOpenAt)}
+                  </strong>
+                </div>
+              </div>
             ) : null}
-
-            <p className="text-muted-foreground">
-              Attendance can be submitted from{" "}
-              <strong>{formatWallClock(attendanceWindow.openTime)}</strong> to{" "}
-              <strong>{formatWallClock(attendanceWindow.closeTime)}</strong>.
-              Outside of this window the form stays closed.
-            </p>
           </>
         )}
 
-        <p className="text-muted-foreground border-t pt-3 text-sm">
-          Both attendance and the <code>#daily-update</code> post must be done
-          within the same window. If anything is unclear, ask in the Discord
-          server.
+        <p className="text-muted-foreground leading-relaxed">
+          Both web attendance and your{" "}
+          <code className="text-foreground font-mono font-semibold">
+            #daily-update
+          </code>{" "}
+          post must be submitted within the same window. If anything is unclear,
+          ask in the Discord server.
         </p>
+
+        <div className="border-border-muted flex flex-wrap items-center justify-between gap-3 border-t pt-4">
+          <span className="text-muted-foreground text-xs">
+            Haven&apos;t registered for the cohort yet?
+          </span>
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/register">
+              Go to Registration
+              <ArrowRight data-icon="inline-end" aria-hidden="true" />
+            </Link>
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );

@@ -21,6 +21,14 @@ const buttonVariants = cva(
           "border-transparent hover:border-foreground hover:bg-accent hover:text-accent-foreground aria-expanded:border-foreground aria-expanded:bg-accent aria-expanded:text-accent-foreground",
         destructive:
           "bg-destructive text-destructive-foreground shadow-xs hover:bg-destructive/90 focus-visible:ring-destructive/50",
+        accent:
+          "bg-accent text-accent-foreground shadow-xs hover:bg-accent/80",
+        lilac:
+          "bg-[var(--border-lilac)] text-foreground shadow-xs hover:bg-[var(--border-lilac)]/80",
+        sage:
+          "bg-[var(--border-sage)] text-foreground shadow-xs hover:bg-[var(--border-sage)]/80",
+        coral:
+          "bg-[var(--border-coral)] text-foreground shadow-xs hover:bg-[var(--border-coral)]/80",
         link: "border-transparent normal-case tracking-normal text-primary underline decoration-2 underline-offset-4 hover:text-accent-foreground",
       },
       size: {

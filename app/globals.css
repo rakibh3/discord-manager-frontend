@@ -84,46 +84,70 @@
   --color-chart-foreground-muted: var(--chart-foreground-muted);
   --color-chart-foreground: var(--chart-foreground);
   --color-chart-background: var(--chart-background);
+  --color-border-lilac: var(--border-lilac);
+  --color-border-yellow: var(--border-yellow);
+  --color-border-coral: var(--border-coral);
+  --color-border-sage: var(--border-sage);
+  --color-border-sky: var(--border-sky);
+  --color-border-muted: var(--border-muted);
+  --color-status-success: var(--status-success-text);
+  --color-status-error: var(--status-error-text);
+  --color-status-warning: var(--status-warning-text);
+  --color-status-info: var(--status-info-text);
 }
 
 /* Warm, playful neo-brutalist theme based on the reference design:
- * warm cream canvas, clean 2px dark charcoal borders, rounded cards and pills,
- * solid offset drop shadows, and a pastel palette:
- * - Yellow sunshine: #FED766
- * - Lilac purple: #C4B5FD
- * - Coral salmon: #FF8B7B
- * - Sage green: #86B49C
- * - Sky blue: #85CDFD
+ * - Base Canvas: #FAF7F2
+ * - Primary Outline / Border: #2D2B32 (refined charcoal slate)
+ * - Pastel Border Color Schema:
+ *   - Lilac Purple: #B8B3E8 / #C4B5FD
+ *   - Sunshine Yellow: #FED766
+ *   - Coral Salmon: #FF8B7B
+ *   - Sage Green: #86B49C
+ *   - Sky Blue: #85CDFD
+ *   - Muted Divider: #E5DFD5
  */
 :root {
   --background: #FAF7F2;
-  --foreground: #1E1E1E;
+  --foreground: #2D2B32;
   --card: #FFFFFF;
-  --card-foreground: #1E1E1E;
+  --card-foreground: #2D2B32;
   --popover: #FFFFFF;
-  --popover-foreground: #1E1E1E;
-  --primary: #1E1E1E;
+  --popover-foreground: #2D2B32;
+  --primary: #2D2B32;
   --primary-foreground: #FFFFFF;
   --secondary: #F2ECE2;
-  --secondary-foreground: #1E1E1E;
+  --secondary-foreground: #2D2B32;
   --muted: #F5EFE6;
   --muted-foreground: #666059;
   --accent: #FED766;
-  --accent-foreground: #1E1E1E;
+  --accent-foreground: #2D2B32;
   --highlight: #FED766;
-  --highlight-foreground: #1E1E1E;
+  --highlight-foreground: #2D2B32;
   --destructive: #FF8B7B;
-  --destructive-foreground: #1E1E1E;
-  --border: #1E1E1E;
-  --input: #1E1E1E;
+  --destructive-foreground: #2D2B32;
+  --border: #2D2B32;
+  --border-muted: #E5DFD5;
+  --border-lilac: #B8B3E8;
+  --border-yellow: #FED766;
+  --border-coral: #FF8B7B;
+  --border-sage: #86B49C;
+  --border-sky: #85CDFD;
+  --input: #2D2B32;
   --ring: #FED766;
-  --shadow-color: #1E1E1E;
+  --shadow-color: #2D2B32;
   --success: #86B49C;
-  --success-foreground: #1E1E1E;
+  --success-foreground: #2D2B32;
   --warning: #FED766;
-  --warning-foreground: #1E1E1E;
+  --warning-foreground: #2D2B32;
   --info: #C4B5FD;
-  --info-foreground: #1E1E1E;
+  --info-foreground: #2D2B32;
+  /* WCAG AA/AAA text tokens tuned for light canvas (#FFFFFF / #FAF7F2) */
+  --status-success-text: #1F6044;
+  --status-error-text: #B42318;
+  --status-warning-text: #855200;
+  --status-info-text: #4C3AA8;
+  --autofill-bg: #FFF9E6;
   --chart-1: #86B49C;
   --chart-2: #FED766;
   --chart-3: #FF8B7B;
@@ -131,33 +155,33 @@
   --chart-5: #85CDFD;
   --radius: 1rem;
   --sidebar: #FAF7F2;
-  --sidebar-foreground: #1E1E1E;
-  --sidebar-primary: #1E1E1E;
+  --sidebar-foreground: #2D2B32;
+  --sidebar-primary: #2D2B32;
   --sidebar-primary-foreground: #FFFFFF;
   --sidebar-accent: #FED766;
-  --sidebar-accent-foreground: #1E1E1E;
-  --sidebar-border: #1E1E1E;
+  --sidebar-accent-foreground: #2D2B32;
+  --sidebar-border: #2D2B32;
   --sidebar-ring: #FED766;
   --chart-background: #FFFFFF;
-  --chart-foreground: #1E1E1E;
+  --chart-foreground: #2D2B32;
   --chart-foreground-muted: #666059;
   --chart-line-primary: var(--chart-1);
   --chart-line-secondary: var(--chart-2);
-  --chart-crosshair: #1E1E1E;
+  --chart-crosshair: #2D2B32;
   --chart-grid: #E5DED3;
-  --chart-brush-border: #1E1E1E;
-  --chart-tooltip-background: #1E1E1E;
+  --chart-brush-border: #2D2B32;
+  --chart-tooltip-background: #2D2B32;
   --chart-tooltip-foreground: #FFFFFF;
   --chart-tooltip-muted: #A8A196;
   --chart-marker-background: #FED766;
-  --chart-marker-border: #1E1E1E;
-  --chart-marker-foreground: #1E1E1E;
+  --chart-marker-border: #2D2B32;
+  --chart-marker-foreground: #2D2B32;
   --chart-label: #666059;
   --chart-scale-01: #FFF9E6;
   --chart-scale-02: #FFEAA8;
   --chart-scale-03: #FED766;
   --chart-scale-04: #E0B843;
-  --chart-scale-05: #1E1E1E;
+  --chart-scale-05: #2D2B32;
   --chart-scale-pattern-color: #F5EFE6;
 }
 
@@ -169,27 +193,39 @@
   --popover: #23201C;
   --popover-foreground: #F7F4EE;
   --primary: #FED766;
-  --primary-foreground: #1E1E1E;
+  --primary-foreground: #2D2B32;
   --secondary: #2E2A25;
   --secondary-foreground: #F7F4EE;
   --muted: #2A2621;
   --muted-foreground: #A8A196;
   --accent: #FED766;
-  --accent-foreground: #1E1E1E;
+  --accent-foreground: #2D2B32;
   --highlight: #FED766;
-  --highlight-foreground: #1E1E1E;
+  --highlight-foreground: #2D2B32;
   --destructive: #FF8B7B;
-  --destructive-foreground: #1E1E1E;
-  --border: #423C34;
-  --input: #423C34;
+  --destructive-foreground: #2D2B32;
+  --border: #443F4D;
+  --border-muted: #38332C;
+  --border-lilac: #8B7CF8;
+  --border-yellow: #FED766;
+  --border-coral: #FF8B7B;
+  --border-sage: #86B49C;
+  --border-sky: #85CDFD;
+  --input: #443F4D;
   --ring: #FED766;
-  --shadow-color: #0D0C0B;
+  --shadow-color: #0E0D11;
   --success: #86B49C;
-  --success-foreground: #1E1E1E;
+  --success-foreground: #2D2B32;
   --warning: #FED766;
-  --warning-foreground: #1E1E1E;
+  --warning-foreground: #2D2B32;
   --info: #C4B5FD;
-  --info-foreground: #1E1E1E;
+  --info-foreground: #2D2B32;
+  /* WCAG AA/AAA text tokens tuned for dark surfaces (#23201C / #181614) */
+  --status-success-text: #9DD1B5;
+  --status-error-text: #FFA699;
+  --status-warning-text: #FED766;
+  --status-info-text: #C4B5FD;
+  --autofill-bg: #2D281D;
   --chart-1: #86B49C;
   --chart-2: #FED766;
   --chart-3: #FF8B7B;
@@ -198,23 +234,23 @@
   --sidebar: #181614;
   --sidebar-foreground: #F7F4EE;
   --sidebar-primary: #FED766;
-  --sidebar-primary-foreground: #1E1E1E;
+  --sidebar-primary-foreground: #2D2B32;
   --sidebar-accent: #FED766;
-  --sidebar-accent-foreground: #1E1E1E;
-  --sidebar-border: #423C34;
+  --sidebar-accent-foreground: #2D2B32;
+  --sidebar-border: #443F4D;
   --sidebar-ring: #FED766;
   --chart-background: #23201C;
   --chart-foreground: #F7F4EE;
   --chart-foreground-muted: #A8A196;
   --chart-crosshair: #F7F4EE;
   --chart-grid: #38332C;
-  --chart-brush-border: #423C34;
+  --chart-brush-border: #443F4D;
   --chart-tooltip-background: #F7F4EE;
-  --chart-tooltip-foreground: #1E1E1E;
+  --chart-tooltip-foreground: #2D2B32;
   --chart-tooltip-muted: #666059;
   --chart-marker-background: #FED766;
-  --chart-marker-border: #1E1E1E;
-  --chart-marker-foreground: #1E1E1E;
+  --chart-marker-border: #2D2B32;
+  --chart-marker-foreground: #2D2B32;
   --chart-label: #A8A196;
   --chart-scale-01: #2E2A25;
   --chart-scale-02: #4D4500;
@@ -305,5 +341,106 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* ── Public student portal (Attendance & Registration) ────────────────────── */
+
+/* Subtle warm drafting-dot backdrop matching the neo-brutalist system in both
+ * light and dark color schemes without heavy gradients. */
+.public-grid-canvas {
+  background-color: var(--background);
+  background-image: radial-gradient(
+    color-mix(in srgb, var(--foreground) 10%, transparent) 1px,
+    transparent 1px
+  );
+  background-size: 22px 22px;
+}
+
+/* Prevent iOS Safari zoom on focus and maintain comfortable tap targets on the
+ * public forms while allowing browser autofill with a non-color inset ring. */
+.public-form [data-slot="input-group"] {
+  min-block-size: 44px;
+  height: auto;
+  overflow: hidden;
+}
+
+.public-form input {
+  font: inherit;
+  font-size: max(1rem, 1em);
+  min-block-size: 40px;
+}
+
+@media (pointer: coarse) {
+  .public-form [data-slot="input-group"] {
+    min-block-size: 48px;
+  }
+
+  .public-form input {
+    min-block-size: 44px;
+  }
+}
+
+/* Autofill styling: opaque surface fill + non-color inset ring without changing
+ * border-width/padding (avoids layout shift). Preserves a distinct focus outline
+ * when an autofilled field receives keyboard focus. */
+.public-form input:is(:autofill, :-webkit-autofill) {
+  box-shadow:
+    inset 0 0 0 2px var(--ring),
+    inset 0 0 0 100vmax var(--autofill-bg);
+  -webkit-text-fill-color: var(--foreground);
+  caret-color: var(--foreground);
+}
+
+.public-form input:is(:autofill, :-webkit-autofill):focus-visible,
+.public-form
+  [data-slot="input-group"]:has(input:is(:autofill, :-webkit-autofill):focus-visible) {
+  outline: 3px solid var(--ring);
+  outline-offset: 2px;
+}
+
+@media (forced-colors: active) {
+  .public-form :is(input, button, a, summary):focus-visible {
+    outline: 3px solid Highlight;
+    outline-offset: 2px;
+  }
+}
+
+/* Native <details> disclosure with smooth intrinsic-size slide animation and
+ * rotated leading chevron (progressive enhancement via ::details-content). */
+.public-disclosure > summary {
+  list-style: none;
+}
+
+.public-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.public-disclosure > summary [data-disclosure-chevron] {
+  rotate: -90deg;
+}
+
+.public-disclosure[open] > summary [data-disclosure-chevron] {
+  rotate: 0deg;
+}
+
+.public-disclosure::details-content {
+  interpolate-size: allow-keywords;
+  overflow: clip;
+  contain: layout;
+}
+
+.public-disclosure:not([open])::details-content {
+  block-size: 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .public-disclosure > summary [data-disclosure-chevron] {
+    transition: rotate 0.2s ease-out;
+  }
+
+  .public-disclosure::details-content {
+    transition: block-size 0.25s ease-in-out, content-visibility 0.25s ease-in-out;
+    transition-behavior: allow-discrete;
   }
 }

@@ -28,6 +28,14 @@ const badgeVariants = cva(
           "bg-highlight text-highlight-foreground [a]:hover:bg-foreground [a]:hover:text-background",
         success:
           "bg-success text-success-foreground [a]:hover:bg-foreground [a]:hover:text-background",
+        lilac:
+          "bg-[var(--border-lilac)] text-foreground [a]:hover:bg-foreground [a]:hover:text-background",
+        coral:
+          "bg-[var(--border-coral)] text-foreground [a]:hover:bg-foreground [a]:hover:text-background",
+        sage:
+          "bg-[var(--border-sage)] text-foreground [a]:hover:bg-foreground [a]:hover:text-background",
+        yellow:
+          "bg-[var(--border-yellow)] text-foreground [a]:hover:bg-foreground [a]:hover:text-background",
         ghost:
           "border-transparent hover:bg-accent hover:text-accent-foreground",
         link: "border-transparent normal-case text-primary underline decoration-2 underline-offset-4",

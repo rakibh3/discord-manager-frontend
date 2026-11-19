@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, CircleAlert, Loader2 } from "lucide-react";
+import { CheckCircle2, CircleAlert, Loader2, Mail } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -8,7 +8,11 @@ import {
   FieldDescription,
   FieldLabel,
 } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+} from "@/components/ui/input-group";
 import type {
   ApiResponse,
   VerifyEmailPayload,
@@ -53,6 +57,8 @@ export function EmailField({
   error,
   fieldId,
   onVerifiedChange,
+  onBadgeKindChange,
+  inputRef,
   /** When the roster gate is OFF (the default), the badge never renders and a
    *  well-formed address is treated as verified for gating purposes. Read on
    *  mount from `/attendance/window`'s `emailVerificationRequired` field. */
@@ -63,6 +69,8 @@ export function EmailField({
   error?: string;
   fieldId: string;
   onVerifiedChange?: (verified: boolean) => void;
+  onBadgeKindChange?: (kind: EmailBadge["kind"]) => void;
+  inputRef?: React.Ref<HTMLInputElement>;
   emailVerificationRequired?: boolean;
 }) {
   const abortRef = useRef<AbortController | null>(null);
@@ -79,7 +87,7 @@ export function EmailField({
 
   // When the gate is OFF, we never verify and every well-formed address is
   // treated as `verified` for gating purposes. The badge sits in a `gate-off`
-  // state so the UI shows nothing rather than a misleading "✅ enrolled".
+  // state so the UI shows nothing rather than a misleading "enrolled" check.
   const gateOff = !emailVerificationRequired;
 
   // `useMemo` keeps the badge referentially stable across renders that don't
@@ -172,115 +180,158 @@ export function EmailField({
   // Report the verdict to the parent so it can gate submit.
   useEffect(() => {
     onVerifiedChange?.(isEmailVerified(badge));
-  }, [badge, onVerifiedChange]);
+    onBadgeKindChange?.(badge.kind);
+  }, [badge, onVerifiedChange, onBadgeKindChange]);
 
+  const hintId = `${fieldId}-hint`;
+  const errorId = `${fieldId}-error`;
   const statusId = `${fieldId}-status`;
   // Skip the badge entirely when the gate is OFF — there is nothing to verify
-  // and a ✅ on every well-formed address would mislead a student into thinking
+  // and a verified pill on every address would mislead a student into thinking
   // any address is enrolled.
   const showBadge = badge.kind !== "idle" && badge.kind !== "gate-off";
+  const isInvalid = Boolean(
+    error ||
+      (showBadge &&
+        (badge.kind === "malformed" || badge.kind === "not-enrolled")),
+  );
+
+  const describedBy = [
+    hintId,
+    error ? errorId : null,
+    showBadge ? statusId : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
-    <Field
-      data-invalid={error || (showBadge && badge.kind === "malformed") ? true : undefined}
-    >
-      <FieldLabel htmlFor={fieldId}>
-        Email <span aria-hidden>*</span>
-        <span className="text-muted-foreground ml-1.5 text-xs font-normal">
-          (Enrolled email)
+    <Field data-invalid={isInvalid ? true : undefined}>
+      <FieldLabel htmlFor={fieldId} className="text-foreground font-semibold">
+        Email address{" "}
+        <span aria-hidden="true" className="text-status-error">
+          *
         </span>
+        {emailVerificationRequired ? (
+          <span className="text-muted-foreground font-mono text-[11px] font-normal">
+            (Enrolled email)
+          </span>
+        ) : null}
       </FieldLabel>
 
-      <Input
-        id={fieldId}
-        name="email"
-        type="email"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        required
-        inputMode="email"
-        autoComplete="email"
-        autoCapitalize="none"
-        autoCorrect="off"
-        spellCheck={false}
-        placeholder="you@example.com"
-        aria-invalid={
-          error || (showBadge && badge.kind === "malformed") ? true : undefined
-        }
-        aria-describedby={showBadge ? statusId : undefined}
-      />
+      {/* Placed above the input so browser autocomplete popovers never cover it */}
+      <FieldDescription id={hintId} className="text-xs">
+        {emailVerificationRequired
+          ? "Use the email address you registered with during enrolment."
+          : "Enter your email address for today's check-in."}
+      </FieldDescription>
 
-      {/*
-        Error sits directly under the input — not after the live status text
-        below — so a server-side rejection reads as the field's own error
-        and stays anchored to the field instead of drifting toward the button.
-      */}
+      <InputGroup>
+        <InputGroupAddon align="inline-start" className="pl-3">
+          <Mail aria-hidden="true" className="size-4" />
+        </InputGroupAddon>
+        <InputGroupInput
+          ref={inputRef}
+          id={fieldId}
+          name="email"
+          type="email"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          required
+          inputMode="email"
+          autoComplete="email"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          enterKeyHint="next"
+          placeholder="you@example.com"
+          aria-invalid={isInvalid ? true : false}
+          aria-describedby={describedBy}
+        />
+        {showBadge ? (
+          <InputGroupAddon align="inline-end" className="pr-3">
+            {badge.kind === "checking" ? (
+              <Loader2
+                aria-hidden="true"
+                className="text-muted-foreground size-4 animate-spin"
+              />
+            ) : badge.kind === "verified" ? (
+              <CheckCircle2
+                aria-hidden="true"
+                className="text-status-success size-4"
+              />
+            ) : badge.kind === "malformed" || badge.kind === "not-enrolled" ? (
+              <CircleAlert
+                aria-hidden="true"
+                className="text-status-error size-4"
+              />
+            ) : null}
+          </InputGroupAddon>
+        ) : null}
+      </InputGroup>
+
+      {/* Error sits directly under the input so a server-side rejection stays
+          anchored to the field. */}
       {error ? (
-        <FieldDescription className="text-destructive">{error}</FieldDescription>
+        <p
+          id={errorId}
+          className="text-status-error flex items-start gap-1.5 text-sm font-medium"
+        >
+          <CircleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+          <span>{error}</span>
+        </p>
       ) : null}
 
       {showBadge ? (
-        <p
+        <div
           id={statusId}
-          role="status"
-          aria-live="polite"
-          className="flex items-start gap-2 text-sm"
+          role={badge.kind === "checking" ? undefined : "status"}
+          aria-live={badge.kind === "checking" ? "off" : "polite"}
+          className="text-sm"
         >
           {badge.kind === "checking" ? (
-            <>
-              <Loader2 aria-hidden className="text-muted-foreground mt-0.5 size-4 shrink-0 animate-spin" />
-              <span className="text-muted-foreground">Checking…</span>
-            </>
+            <p className="text-muted-foreground flex items-center gap-2 text-xs font-medium">
+              <Loader2 aria-hidden="true" className="size-3.5 shrink-0 animate-spin" />
+              <span>Checking enrolment roster…</span>
+            </p>
           ) : null}
 
           {badge.kind === "malformed" ? (
-            <>
-              <CircleAlert aria-hidden className="text-destructive mt-0.5 size-4 shrink-0" />
-              <span className="text-destructive">
+            <p className="text-status-error flex items-start gap-1.5 text-xs font-medium">
+              <CircleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+              <span>
                 Enter a valid email address — like{" "}
-                <code>you@example.com</code>.
+                <code className="font-mono">you@example.com</code>.
               </span>
-            </>
+            </p>
           ) : null}
 
           {badge.kind === "not-enrolled" ? (
-            <>
-              <CircleAlert aria-hidden className="text-destructive mt-0.5 size-4 shrink-0" />
-              <span className="text-destructive">{badge.message}</span>
-            </>
+            <p className="border-border-coral bg-destructive/10 text-status-error flex items-start gap-2 rounded-xl border px-3 py-2 text-xs font-medium">
+              <CircleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+              <span>{badge.message}</span>
+            </p>
           ) : null}
 
           {badge.kind === "verified" ? (
-            <>
-              <CheckCircle2 aria-hidden className="text-success mt-0.5 size-4 shrink-0" />
-              <span className="text-success">✅ {badge.message}</span>
-            </>
+            <p className="border-border-sage bg-success/15 text-status-success flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold">
+              <CheckCircle2 aria-hidden="true" className="size-4 shrink-0" />
+              <span>{badge.message}</span>
+            </p>
           ) : null}
 
           {badge.kind === "error" ? (
-            <>
-              <CircleAlert aria-hidden className="text-muted-foreground mt-0.5 size-4 shrink-0" />
-              <span className="text-muted-foreground">
+            <p className="text-muted-foreground flex items-start gap-1.5 text-xs">
+              <CircleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+              <span>
                 Can&apos;t verify right now
                 {badge.retryAfter
                   ? ` — try again in about ${badge.retryAfter} seconds`
                   : ""}
                 . You can still submit the form.
               </span>
-            </>
+            </p>
           ) : null}
-        </p>
-      ) : null}
-
-      {/* When the roster gate is armed, a non-enrolled email is refused before
-          any row is written. One line states the rule; the deeper "what then"
-          lives in the on-submit alert so the empty form does not become a wall
-          of text. */}
-      {emailVerificationRequired ? (
-        <FieldDescription className="text-muted-foreground/90">
-          Use the email you registered with during enrolment — a different
-          email will not be accepted.
-        </FieldDescription>
+        </div>
       ) : null}
     </Field>
   );
